@@ -1,0 +1,71 @@
+{
+  "name": "codex-chat-exporter",
+  "displayName": "Codex Chat Exporter",
+  "description": "Export Codex (OpenAI) VS Code chat logs from your local ~/.codex sessions.",
+  "version": "0.0.2",
+  "publisher": "guoyujia",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "onCommand:codexChatExporter.exportChat",
+    "onCommand:codexChatExporter.exportLatestChat",
+    "onCommand:codexChatExporter.openCodexDataFolder"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexChatExporter.exportChat",
+        "title": "Codex: 导出聊天记录…"
+      },
+      {
+        "command": "codexChatExporter.exportLatestChat",
+        "title": "Codex: 导出最近一次聊天记录…"
+      },
+      {
+        "command": "codexChatExporter.openCodexDataFolder",
+        "title": "Codex: 打开 Codex 数据目录"
+      }
+    ],
+    "configuration": {
+      "title": "Codex Chat Exporter",
+      "properties": {
+        "codexChatExporter.codexDir": {
+          "type": "string",
+          "default": "",
+          "description": "Codex 数据目录；留空则使用 ~/.codex（Windows 使用 %USERPROFILE%\\.codex）。"
+        },
+        "codexChatExporter.onlyVsCodeSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "只显示/导出 VS Code 发起的会话（originator=codex_vscode 或 source=vscode）。"
+        },
+        "codexChatExporter.includeAgentReasoning": {
+          "type": "boolean",
+          "default": false,
+          "description": "Markdown 导出中包含 agent_reasoning（可能较长）。"
+        },
+        "codexChatExporter.includeToolCalls": {
+          "type": "boolean",
+          "default": false,
+          "description": "Markdown 导出中包含工具调用（function_call）。"
+        },
+        "codexChatExporter.includeToolOutputs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Markdown 导出中包含工具输出（function_call_output，可能包含敏感信息）。"
+        },
+        "codexChatExporter.includeEnvironmentContext": {
+          "type": "boolean",
+          "default": false,
+          "description": "Markdown 导出中包含 <environment_context>（默认不导出，避免干扰对话内容）。"
+        }
+      }
+    }
+  }
+}

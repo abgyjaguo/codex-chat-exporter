@@ -1,0 +1,6 @@
+.DS_Store
+.npm-cache/
+*.vsix
+rollout-*.md
+rollout-*.jsonl
+
