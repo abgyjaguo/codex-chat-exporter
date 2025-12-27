@@ -9,7 +9,15 @@ async function main() {
   const rootDir = (process.env[DEFAULT_ENV_VAR] || "").trim();
   if (!rootDir) {
     throw new Error(
-      `${DEFAULT_ENV_VAR} is not set. Example: ${DEFAULT_ENV_VAR}=/tmp/open-notebook`
+      [
+        `${DEFAULT_ENV_VAR} 未设置。请先设置到一个可写目录。`,
+        "",
+        "示例（bash/zsh）：",
+        `  export ${DEFAULT_ENV_VAR}=/tmp/open-notebook-sync-demo`,
+        "",
+        "示例（PowerShell）：",
+        `  $env:${DEFAULT_ENV_VAR} = \"C:\\\\temp\\\\open-notebook-sync-demo\"`,
+      ].join("\n")
     );
   }
 

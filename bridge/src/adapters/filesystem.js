@@ -12,6 +12,26 @@ function assertNonEmpty(value, name) {
   }
 }
 
+function formatFsError(error, context) {
+  const { action, targetPath, envVar, rootDir } = context;
+  const code = error && error.code ? error.code : "UNKNOWN";
+  const base = `${action} failed (${code}): ${targetPath}. ${error.message}`;
+
+  const hints = [];
+  if (code === "EACCES" || code === "EPERM") {
+    hints.push(
+      `Permission denied. Set ${envVar} to a writable directory (e.g. /tmp/open-notebook or $HOME/open-notebook).`
+    );
+  }
+  if (code === "ENOENT") {
+    hints.push(
+      `Path not found. Ensure ${envVar} points to an existing/writable directory: ${rootDir}`
+    );
+  }
+
+  return hints.length ? `${base}\nHints:\n- ${hints.join("\n- ")}` : base;
+}
+
 function toSlug(value) {
   const normalized = String(value)
     .toLowerCase()
@@ -34,7 +54,7 @@ async function ensureDir(dirPath) {
   try {
     await fs.mkdir(dirPath, { recursive: true });
   } catch (error) {
-    throw new Error(`Failed to create directory: ${dirPath}. ${error.message}`);
+    throw error;
   }
 }
 
@@ -90,7 +110,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     const rootDir = (process.env[envVar] || "").trim();
     if (!rootDir) {
       throw new Error(
-        `${envVar} is not set. Please set it to the OpenNotebook filesystem root.`
+        `${envVar} is not set. Example: ${envVar}=/tmp/open-notebook`
       );
     }
     return new FilesystemAdapter(rootDir, { envVar });
@@ -98,8 +118,31 @@ class FilesystemAdapter extends OpenNotebookAdapter {
 
   async createOrGetNotebook(project) {
     assertNonEmpty(project, "project");
-    await ensureDir(this.rootDir);
-    await ensureDir(this.notebooksDir);
+    try {
+      await ensureDir(this.rootDir);
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Create notebook root directory",
+          targetPath: this.rootDir,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
+
+    try {
+      await ensureDir(this.notebooksDir);
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Create notebooks directory",
+          targetPath: this.notebooksDir,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
 
     const map = await this.#loadNotebookMap();
     let notebookId = map.projects[project];
@@ -118,8 +161,19 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     const sourcesDir = path.join(notebookDir, "sources");
     const notesDir = path.join(notebookDir, "notes");
 
-    await ensureDir(sourcesDir);
-    await ensureDir(notesDir);
+    try {
+      await ensureDir(sourcesDir);
+      await ensureDir(notesDir);
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Create notebook directory structure",
+          targetPath: notebookDir,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
 
     const metaPath = path.join(notebookDir, "notebook.json");
     await this.#ensureNotebookMeta(metaPath, notebookId, project);
@@ -145,7 +199,18 @@ class FilesystemAdapter extends OpenNotebookAdapter {
       notebook_id: notebookId,
       session,
     });
-    await fs.writeFile(sourcePath, `${frontMatter}${content}\n`, "utf8");
+    try {
+      await fs.writeFile(sourcePath, `${frontMatter}${content}\n`, "utf8");
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Write source",
+          targetPath: sourcePath,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
     return sourceId;
   }
 
@@ -167,7 +232,18 @@ class FilesystemAdapter extends OpenNotebookAdapter {
       kind,
       links,
     });
-    await fs.writeFile(notePath, `${frontMatter}${content}\n`, "utf8");
+    try {
+      await fs.writeFile(notePath, `${frontMatter}${content}\n`, "utf8");
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Write note",
+          targetPath: notePath,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
     return noteId;
   }
 
@@ -196,7 +272,18 @@ class FilesystemAdapter extends OpenNotebookAdapter {
   }
 
   async #writeNotebookMap(map) {
-    await fs.writeFile(this.mapPath, JSON.stringify(map, null, 2), "utf8");
+    try {
+      await fs.writeFile(this.mapPath, JSON.stringify(map, null, 2), "utf8");
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Write notebook map",
+          targetPath: this.mapPath,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
   }
 
   async #ensureNotebookMeta(metaPath, notebookId, project) {
@@ -217,7 +304,18 @@ class FilesystemAdapter extends OpenNotebookAdapter {
         project,
         created_at: new Date().toISOString(),
       };
-      await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8");
+      try {
+        await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8");
+      } catch (error) {
+        throw new Error(
+          formatFsError(error, {
+            action: "Write notebook metadata",
+            targetPath: metaPath,
+            envVar: this.envVar,
+            rootDir: this.rootDir,
+          })
+        );
+      }
       return;
     }
 
