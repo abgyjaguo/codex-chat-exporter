@@ -9,54 +9,79 @@
 - HTTP Server：Express/Fastify 均可
 - SQLite：存 project/session/source 映射、生成结果缓存
 
-## 3. API（按 PRD 建议）
+## 3. API（MVP 契约）
+
+### 3.0 通用约定
+- `Content-Type: application/json`
+- 时间字段使用 ISO-8601（UTC）
+- Warning 结构：
+  - `code`：string
+  - `message`：string
+  - `details`：object，可选
+- Error 响应结构（所有 4xx 和 5xx 通用）：
+  - `error.code`：string
+  - `error.message`：string
+  - `error.details`：object，可选
+  - `error.request_id`：string，可选
 
 ### 3.1 导入
 `POST /bridge/v1/import/codex-chat`
 
-Request（MVP）：
+#### Request 字段
+| 字段 | 类型 | 必填 | 示例值 | 说明 |
+| --- | --- | --- | --- | --- |
+| project.name | string | 是 | `cce-wt-docs` | 项目名 |
+| project.cwd | string | 否 | `/mnt/d/cce-wt-docs` | 工作区路径 |
+| session.name | string | 是 | `2025-12-26-codex` | 会话名 |
+| session.source | string | 否 | `codex_jsonl` | 来源类型，默认 `codex_jsonl` |
+| exported_at | string | 是 | `2025-12-26T00:00:00Z` | 导出时间 |
+| codex.jsonl_text | string | 是 | `{\"type\":\"message\",\"role\":\"user\"}` | JSONL 原文，MVP 必填 |
+| codex.markdown_text | string | 否 | `# Codex Chat` | Markdown 原文，后续可用 |
+
+#### Request 示例
 ```json
 {
-  "project": { "name": "string", "cwd": "string" },
-  "session": { "name": "string" },
-  "exported_at": "ISO-8601",
-  "codex": { "jsonl_text": "string" }
+  "project": { "name": "cce-wt-docs", "cwd": "/mnt/d/cce-wt-docs" },
+  "session": { "name": "2025-12-26-codex", "source": "codex_jsonl" },
+  "exported_at": "2025-12-26T00:00:00Z",
+  "codex": { "jsonl_text": "{\"type\":\"message\",\"role\":\"user\",\"content\":\"hello\"}" }
 }
 ```
 
-Response（示例）：
+#### Response 字段（200）
+| 字段 | 类型 | 必填 | 示例值 | 说明 |
+| --- | --- | --- | --- | --- |
+| project_id | string | 是 | `proj_0001` | 项目 id |
+| session_id | string | 是 | `sess_0001` | 会话 id |
+| source_id | string | 是 | `src_0001` | Sources id |
+| message_count | number | 是 | `123` | 规范化消息数量 |
+| imported_at | string | 是 | `2025-12-26T00:00:01Z` | 导入完成时间 |
+| warnings | array | 否 | `[]` | Warning 列表 |
+
+#### Response 示例
 ```json
 {
   "project_id": "proj_0001",
   "session_id": "sess_0001",
+  "source_id": "src_0001",
   "message_count": 123,
+  "imported_at": "2025-12-26T00:00:01Z",
   "warnings": []
 }
 ```
 
+#### 错误响应
+使用 3.0 的 Error 响应结构，典型为 400 或 413。
+
 ### 3.2 生成
 `POST /bridge/v1/projects/{project_id}/generate`
 
-Request（示例）：
-```json
-{
-  "session_id": "sess_0001",
-  "mode": "adult_mvp"
-}
-```
-
-Response：见 `docs/ai-learning-os/SPECS/21-bridge-generation.md`
+- API 契约见 `docs/ai-learning-os/SPECS/21-bridge-generation.md`
 
 ### 3.3 同步到 OpenNotebook
 `POST /bridge/v1/projects/{project_id}/sync/open-notebook`
 
-Request（示例）：
-```json
-{
-  "session_id": "sess_0001",
-  "targets": ["sources", "notes"]
-}
-```
+- API 契约见 `docs/ai-learning-os/SPECS/30-open-notebook-sync.md`
 
 ## 4. 数据落库（建议最小表）
 
