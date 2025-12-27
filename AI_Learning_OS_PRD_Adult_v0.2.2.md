@@ -33,8 +33,8 @@
 - 用户缺口：**会话复盘、知识资产沉淀、可迁移练习** 仍是空白。
 
 ### 2.2 竞品分层（与本产品的差异）
-- **AI Coding / Agentic IDE**：强在完成任务（Copilot Chat / Cursor / Claude Code…），弱在学习沉淀与证据化复盘。
-- **Notebook/知识工作台**：强在资料导入与基于来源问答（NotebookLM / OpenNotebook…），弱在 IDE 过程采集与项目化复盘。
+- **AI Coding / Agentic IDE**：强在完成任务（Copilot Chat / Cursor / Claude Code 等），弱在学习沉淀与证据化复盘。
+- **Notebook/知识工作台**：强在资料导入与基于来源问答（NotebookLM / OpenNotebook 等），弱在 IDE 过程采集与项目化复盘。
 - **个人知识管理/复盘工具**：强在记录与结构化，弱在“自动从 AI 协作过程生成学习包”。
 
 ### 2.3 成人版差异化
@@ -85,7 +85,7 @@
 1. **Capture**：从 VS Code 导出 Codex 对话（MVP 必须）
 2. **Structure**：切分段落 + 里程碑识别 + 学习点抽取
 3. **Visualize**：生成图解（故事板/结构图/概念卡）
-4. **Practice**：生成可迁移练习（Explain & Fix、Constraint Remix…）
+4. **Practice**：生成可迁移练习（Explain & Fix、Constraint Remix 等）
 5. **Review**：OpenNotebook 中检索/追问/复用，形成长期成长
 
 ---

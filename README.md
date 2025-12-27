@@ -17,14 +17,14 @@
 1. 在 VS Code 打开本项目目录。
 2. 按 `F5` 启动 Extension Development Host。
 3. 在命令面板运行：
-   - `Codex: 导出聊天记录…`
-   - `Codex: 导出最近一次聊天记录…`
+   - `Codex: 导出聊天记录`
+   - `Codex: 导出最近一次聊天记录`
 
 ## Windows 使用
 
-1. 安装：在 VS Code 命令面板运行 `Extensions: Install from VSIX...`，选择 `codex-chat-exporter-*.vsix`。
+1. 安装：在 VS Code 命令面板运行 `Extensions: Install from VSIX`，选择 `codex-chat-exporter-*.vsix`。
 2. 默认数据目录：`%USERPROFILE%\\.codex`（一般无需改）。
-3. 使用：命令面板运行 `Codex: 导出聊天记录…`。
+3. 使用：命令面板运行 `Codex: 导出聊天记录`。
 
 ## 配置项
 
