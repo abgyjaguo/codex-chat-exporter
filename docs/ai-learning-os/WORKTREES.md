@@ -7,7 +7,7 @@
 - 主仓库目录：`/mnt/d/codex-chat-exporter-main`
 - VS Code（Windows）CLI：`/mnt/d/Program Files/Microsoft VS Code/bin/code`
 - Cursor（Windows）CLI：`/mnt/d/Program Files/cursor/resources/app/bin/code`
-- 你已经创建好的 4 个 worktree：
+- 约定使用 4 个 worktree 目录（不存在就按 1.2 创建/重建）：
   - `/mnt/d/cce-wt-docs`（分支：`chore/ai-learning-os-docs`）
   - `/mnt/d/cce-wt-extension`（分支：`feat/vscode-sync-to-bridge`）
   - `/mnt/d/cce-wt-bridge`（分支：`feat/bridge-service-mvp`）
@@ -84,6 +84,17 @@ git worktree add /mnt/d/cce-wt-extension -b feat/vscode-sync-to-bridge main
 git worktree add /mnt/d/cce-wt-bridge -b feat/bridge-service-mvp main
 git worktree add /mnt/d/cce-wt-open-notebook -b feat/open-notebook-sync main
 
+git worktree list
+```
+
+如果上面某条命令报错 `fatal: a branch named 'xxx' already exists`，说明分支已存在但 worktree 目录不存在，这时用“重建 worktree（复用已有分支）”的命令：
+
+```bash
+cd /mnt/d/codex-chat-exporter-main
+git worktree add /mnt/d/cce-wt-docs chore/ai-learning-os-docs
+git worktree add /mnt/d/cce-wt-extension feat/vscode-sync-to-bridge
+git worktree add /mnt/d/cce-wt-bridge feat/bridge-service-mvp
+git worktree add /mnt/d/cce-wt-open-notebook feat/open-notebook-sync
 git worktree list
 ```
 
