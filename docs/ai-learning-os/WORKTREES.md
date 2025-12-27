@@ -247,6 +247,26 @@ git checkout -b feat/open-notebook-sync origin/main
 
 然后分别用 VS Code 打开这四个目录即可。
 
+### 2.6 选型对比：WSL vs Windows vs 多个 clone vs Dev Containers
+
+你的需求本质是：**同时打开多个 VS Code 窗口，每个窗口对应一个独立目录，并且每个目录在不同分支**。实现这一点并不一定要 WSL，但你必须避免 “同一个 worktree 被 Windows git 和 WSL git 混用”。
+
+下面是按“你当前情况”给的对比与推荐：
+
+| 方案 | 多窗口多分支 | VS Code Source Control | 适合谁 | 主要优点 | 主要缺点 |
+| --- | --- | --- | --- | --- | --- |
+| WSL + worktree（推荐给你现在） | 支持 | 支持（在 `WSL:` 窗口里） | 你已经用 WSL 创建 worktree，并且愿意用 `WSL:` 窗口 | 你现有 worktree 直接可用；bash 命令一致；后续做 Bridge（Node/SQLite）更像服务器环境 | 需要安装 Remote - WSL；如果代码在 `/mnt/d`，大量文件读写会比放在 WSL 的 `~/` 慢 |
+| Windows + worktree | 支持 | 支持（Windows 窗口） | 你只想用 Windows VS Code + PowerShell | 全部在 Windows 里操作；不用 WSL；终端与路径统一 | 需要删除现有 WSL worktree 并用 Windows git 重新创建；脚本与命令更偏 Windows 风格 |
+| 多个 clone（Windows 或 WSL 都行） | 支持 | 支持 | 你觉得 worktree 概念太绕，想要最直观 | 每个目录自带 `.git`，不容易遇到 “gitdir 路径看不懂” 的问题 | 更占空间；需要在多个目录里分别 pull/rebase；容易忘了同步 |
+| Dev Containers（Docker） | 支持 | 支持 | 你想把开发环境固定下来，不想污染系统 | 环境一致、可复用、易分享；适合后续 Bridge 服务 | 初次配置成本高；需要 Docker；调试链路更复杂 |
+
+为什么我推荐你先用 WSL：
+- 你现在这些 worktree 本来就是 WSL git 创建的，最少改动就能用起来。
+- 你接下来要做的 Bridge 服务更像“本地跑一个小服务”，在 Linux/bash 里跑 Node、SQLite、脚本通常更顺手。
+- 你要多窗口并行时，统一用 WSL（同一种 git、同一种 shell）最不容易踩坑。
+
+如果你明确只想用 Windows（不想出现 `WSL:` 窗口），推荐你直接走「2.4 替代方案 2」或「2.5 替代方案 3」。
+
 ## 3. 每个窗口具体做什么（避免互相打架）
 
 - 文档窗口（`/mnt/d/cce-wt-docs`，分支 `chore/ai-learning-os-docs`）
