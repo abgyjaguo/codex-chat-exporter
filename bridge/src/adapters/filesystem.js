@@ -163,12 +163,24 @@ class FilesystemAdapter extends OpenNotebookAdapter {
 
     try {
       await ensureDir(sourcesDir);
+    } catch (error) {
+      throw new Error(
+        formatFsError(error, {
+          action: "Create sources directory",
+          targetPath: sourcesDir,
+          envVar: this.envVar,
+          rootDir: this.rootDir,
+        })
+      );
+    }
+
+    try {
       await ensureDir(notesDir);
     } catch (error) {
       throw new Error(
         formatFsError(error, {
-          action: "Create notebook directory structure",
-          targetPath: notebookDir,
+          action: "Create notes directory",
+          targetPath: notesDir,
           envVar: this.envVar,
           rootDir: this.rootDir,
         })
