@@ -82,11 +82,12 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     assertNonEmpty(rootDir, "rootDir");
     this.rootDir = rootDir;
     this.notebooksDir = path.join(rootDir, "notebooks");
+    this.mapPath = path.join(rootDir, "notebook-map.json");
     this.envVar = options.envVar || DEFAULT_ENV_VAR;
   }
 
   static fromEnv(envVar = DEFAULT_ENV_VAR) {
-    const rootDir = process.env[envVar];
+    const rootDir = (process.env[envVar] || "").trim();
     if (!rootDir) {
       throw new Error(
         `${envVar} is not set. Please set it to the OpenNotebook filesystem root.`
@@ -97,7 +98,22 @@ class FilesystemAdapter extends OpenNotebookAdapter {
 
   async createOrGetNotebook(project) {
     assertNonEmpty(project, "project");
-    const notebookId = stableId("nb", project);
+    await ensureDir(this.rootDir);
+    await ensureDir(this.notebooksDir);
+
+    const map = await this.#loadNotebookMap();
+    let notebookId = map.projects[project];
+    let mapUpdated = false;
+    if (!notebookId) {
+      notebookId = stableId("nb", project);
+      map.projects[project] = notebookId;
+      mapUpdated = true;
+    }
+
+    if (mapUpdated) {
+      await this.#writeNotebookMap(map);
+    }
+
     const notebookDir = path.join(this.notebooksDir, notebookId);
     const sourcesDir = path.join(notebookDir, "sources");
     const notesDir = path.join(notebookDir, "notes");
@@ -153,6 +169,34 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     });
     await fs.writeFile(notePath, `${frontMatter}${content}\n`, "utf8");
     return noteId;
+  }
+
+  async #loadNotebookMap() {
+    let map = { version: 1, projects: {} };
+    try {
+      const raw = await fs.readFile(this.mapPath, "utf8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        map = {
+          version: parsed.version || 1,
+          projects:
+            parsed.projects && typeof parsed.projects === "object"
+              ? parsed.projects
+              : {},
+        };
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw new Error(
+          `Failed to read notebook map: ${this.mapPath}. ${error.message}`
+        );
+      }
+    }
+    return map;
+  }
+
+  async #writeNotebookMap(map) {
+    await fs.writeFile(this.mapPath, JSON.stringify(map, null, 2), "utf8");
   }
 
   async #ensureNotebookMeta(metaPath, notebookId, project) {
