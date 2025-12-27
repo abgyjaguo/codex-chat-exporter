@@ -15,7 +15,9 @@
   "activationEvents": [
     "onCommand:codexChatExporter.exportChat",
     "onCommand:codexChatExporter.exportLatestChat",
-    "onCommand:codexChatExporter.openCodexDataFolder"
+    "onCommand:codexChatExporter.openCodexDataFolder",
+    "onCommand:codexChatExporter.syncToBridge",
+    "onCommand:codexChatExporter.syncLatestToBridge"
   ],
   "contributes": {
     "commands": [
@@ -30,6 +32,14 @@
       {
         "command": "codexChatExporter.openCodexDataFolder",
         "title": "Codex: 打开 Codex 数据目录"
+      },
+      {
+        "command": "codexChatExporter.syncToBridge",
+        "title": "Codex: 同步聊天记录到 Bridge"
+      },
+      {
+        "command": "codexChatExporter.syncLatestToBridge",
+        "title": "Codex: 同步最近一次聊天记录到 Bridge"
       }
     ],
     "configuration": {
