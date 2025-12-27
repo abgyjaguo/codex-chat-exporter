@@ -202,6 +202,41 @@ git status -sb
 
 你应该看到输出包含：`## chore/ai-learning-os-docs`
 
+### 2.1.3 常见问题：`detected dubious ownership`（需要设置 safe.directory）
+
+如果你在 WSL 里执行 git 命令（例如 `git checkout main`）时看到类似报错：
+
+```text
+fatal: detected dubious ownership in repository at '/mnt/d/codex-chat-exporter-main'
+To add an exception for this directory, call:
+
+        git config --global --add safe.directory /mnt/d/codex-chat-exporter-main
+```
+
+原因：
+- 这是 Git 的安全保护：当前仓库目录的“拥有者”与当前登录的 Linux 用户不一致时，Git 会要求你把该目录加入信任列表。
+- 这在 WSL 的 `/mnt/c`、`/mnt/d` 盘符下很常见（文件权限映射导致看起来像是另一个用户拥有）。
+
+解决方法（推荐：把本项目相关目录加入 safe.directory）：
+
+```bash
+git config --global --add safe.directory /mnt/d/codex-chat-exporter-main
+git config --global --add safe.directory /mnt/d/cce-wt-docs
+git config --global --add safe.directory /mnt/d/cce-wt-extension
+git config --global --add safe.directory /mnt/d/cce-wt-bridge
+git config --global --add safe.directory /mnt/d/cce-wt-open-notebook
+```
+
+验证：
+
+```bash
+cd /mnt/d/codex-chat-exporter-main
+git status -sb
+```
+
+不推荐但可以用的方案：
+- `git config --global --add safe.directory '*'`（信任所有目录，安全性差，不建议）
+
 ### 2.2 原理：为什么这里建议用 WSL
 
 你现在遇到的问题有两层：
