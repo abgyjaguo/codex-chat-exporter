@@ -143,6 +143,40 @@ git status -sb
 
 你应该看到输出包含：`## chore/ai-learning-os-docs`
 
+### 2.1.1 常见问题：终端是 Git Bash（提示符包含 `MINGW64`）
+
+如果你看到提示符类似这样：
+
+```text
+GuoYW@DESKTOP-0L7GR3N MINGW64 ~
+$
+```
+
+这不是 WSL 的 bash，而是 Windows 的 Git Bash（它运行的是 Windows git）。
+
+如果你只是执行了 `git status -sb`，并且你当前目录是 `~`（一般是 `C:\\Users\\GuoYW`），那它本来就不是仓库目录，肯定会报：
+
+```text
+fatal: not a git repository (or any of the parent directories): .git
+```
+
+但即使你 `cd` 到 `D:\\cce-wt-docs`，也依然会遇到问题，因为这些 worktree 是 WSL git 创建的（见 2.2 原理），Windows git 读不到 `.git` 里记录的 WSL 路径。
+
+解决方法（推荐二选一）：
+
+1) 用 WSL 的 git（推荐）
+   - 直接在 Git Bash 里执行一条命令调用 WSL git：
+
+```bash
+wsl.exe bash -lc "cd /mnt/d/cce-wt-docs && git status -sb"
+```
+
+2) 让 VS Code 变成 `WSL:` 窗口（推荐）
+   - 安装扩展：在 VS Code 扩展里搜索并安装 `Remote - WSL`（Microsoft）
+   - 按 `Ctrl+Shift+P`，运行 `Remote-WSL: New Window`
+   - 在新窗口里 `File` → `Open Folder`，选择 `/mnt/d/cce-wt-docs`
+   - 打开终端后，提示符应该类似：`guoyw@DESKTOP-0L7GR3N:/mnt/d/cce-wt-docs$`（不会出现 `MINGW64`）
+
 ### 2.2 原理：为什么这里建议用 WSL
 
 你现在遇到的问题有两层：
