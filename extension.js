@@ -3,6 +3,8 @@
 
 const vscode = require("vscode");
 const fs = require("fs");
+const http = require("http");
+const https = require("https");
 const os = require("os");
 const path = require("path");
 const readline = require("readline");
@@ -36,6 +38,24 @@ function activate(context) {
             `无法打开 Codex 数据目录：${stringifyError(err)}`,
           );
         }
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codexChatExporter.syncToBridge",
+      async () => {
+        await syncToBridgeCommand();
+      },
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "codexChatExporter.syncLatestToBridge",
+      async () => {
+        await syncToBridgeCommand({ pickLatest: true });
       },
     ),
   );
@@ -185,6 +205,190 @@ async function exportChatCommand(options = {}) {
   void vscode.window.showInformationMessage(
     `导出完成：成功 ${results.ok}，失败 ${results.failed}（目录：${outDir}）`,
   );
+}
+
+async function syncToBridgeCommand(options = {}) {
+  const codexDir = resolveCodexDir();
+
+  if (!fs.existsSync(codexDir)) {
+    void vscode.window.showErrorMessage(
+      `未找到 Codex 数据目录：${codexDir}\n\n你可以在设置里配置 codexChatExporter.codexDir。`,
+    );
+    return;
+  }
+
+  const config = vscode.workspace.getConfiguration("codexChatExporter");
+  const onlyVsCodeSessions = config.get("onlyVsCodeSessions", true);
+  const includeAgentReasoning = config.get("includeAgentReasoning", false);
+  const includeToolCalls = config.get("includeToolCalls", false);
+  const includeToolOutputs = config.get("includeToolOutputs", false);
+  const includeEnvironmentContext = config.get("includeEnvironmentContext", false);
+  const bridgeBaseUrl = String(config.get("bridgeBaseUrl", "http://127.0.0.1:7331") || "").trim();
+  const defaultProjectName = String(config.get("defaultProjectName", "") || "").trim();
+  const defaultDoneDefinition = String(config.get("defaultDoneDefinition", "") || "").trim();
+  const syncIncludeRawJsonl = !!config.get("syncIncludeRawJsonl", true);
+  const syncIncludeMarkdown = !!config.get("syncIncludeMarkdown", false);
+
+  if (!syncIncludeRawJsonl && !syncIncludeMarkdown) {
+    void vscode.window.showErrorMessage(
+      "同步配置无效：请至少开启 codexChatExporter.syncIncludeRawJsonl 或 codexChatExporter.syncIncludeMarkdown。",
+    );
+    return;
+  }
+
+  if (!bridgeBaseUrl) {
+    void vscode.window.showErrorMessage(
+      "Bridge 地址为空：请在设置中配置 codexChatExporter.bridgeBaseUrl。",
+    );
+    return;
+  }
+
+  let endpoint;
+  try {
+    endpoint = new URL("/bridge/v1/import/codex-chat", bridgeBaseUrl);
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Bridge 地址无效：${bridgeBaseUrl}\n${stringifyError(err)}`,
+    );
+    return;
+  }
+
+  const sessions = await discoverSessionFiles(codexDir);
+  if (sessions.length === 0) {
+    void vscode.window.showWarningMessage(
+      `未在 ${codexDir} 下找到可同步的会话日志（.jsonl）。`,
+    );
+    return;
+  }
+
+  const sessionInfos = [];
+  for (const s of sessions) {
+    const meta = await readSessionMeta(s.filePath);
+    if (onlyVsCodeSessions && meta && !isVsCodeSession(meta)) continue;
+    sessionInfos.push({ ...s, meta, sortKey: computeSortKey(meta, s) });
+  }
+
+  if (sessionInfos.length === 0) {
+    void vscode.window.showWarningMessage(
+      onlyVsCodeSessions
+        ? "未找到 VS Code 发起的 Codex 会话（尝试关闭设置 codexChatExporter.onlyVsCodeSessions）。"
+        : "未找到可同步的 Codex 会话。",
+    );
+    return;
+  }
+
+  sessionInfos.sort((a, b) => (b.sortKey ?? 0) - (a.sortKey ?? 0));
+
+  let picked = null;
+  if (options.pickLatest) {
+    picked = [sessionInfos[0]];
+  } else {
+    await fillSessionPreviews(sessionInfos);
+    const items = sessionInfos.map((s) => toQuickPickItem(s));
+    const pickedItems = await vscode.window.showQuickPick(items, {
+      canPickMany: true,
+      matchOnDescription: true,
+      matchOnDetail: true,
+      placeHolder: "选择要同步的 Codex 会话（可多选）",
+      ignoreFocusOut: true
+    });
+    if (!pickedItems || pickedItems.length === 0) return;
+    picked = pickedItems.map((i) => i.sessionInfo);
+  }
+
+  if (!picked || picked.length === 0) return;
+
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  const workspaceName = workspaceFolder?.name || "";
+  const workspacePath = workspaceFolder?.uri?.fsPath || "";
+  const projectDefault = workspaceName || defaultProjectName;
+
+  const projectName = await promptForRequiredInput(
+    "输入 project_name（可用于 Bridge 归档）",
+    projectDefault,
+  );
+  if (!projectName) return;
+
+  const sessionPlans = [];
+  for (const sessionInfo of picked) {
+    const defaultSessionName = sessionInfo.preview
+      ? sessionInfo.preview
+      : path.basename(sessionInfo.filePath, ".jsonl");
+    const sessionName = await promptForRequiredInput(
+      "输入 session_name（可编辑）",
+      defaultSessionName,
+    );
+    if (!sessionName) return;
+    sessionPlans.push({ sessionInfo, sessionName });
+  }
+
+  const results = { ok: 0, failed: 0 };
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "同步到 Bridge…",
+      cancellable: true,
+    },
+    async (progress, token) => {
+      let done = 0;
+      for (const plan of sessionPlans) {
+        if (token.isCancellationRequested) break;
+
+        done += 1;
+        progress.report({
+          increment: (100 * 1) / sessionPlans.length,
+          message: `${done}/${sessionPlans.length} ${path.basename(plan.sessionInfo.filePath)}`,
+        });
+
+        try {
+          const payload = await buildBridgePayload({
+            sessionInfo: plan.sessionInfo,
+            sessionName: plan.sessionName,
+            projectName,
+            projectCwd: workspacePath || (typeof plan.sessionInfo.meta?.cwd === "string" ? plan.sessionInfo.meta.cwd : ""),
+            doneDefinition: defaultDoneDefinition,
+            includeAgentReasoning,
+            includeToolCalls,
+            includeToolOutputs,
+            includeEnvironmentContext,
+            syncIncludeRawJsonl,
+            syncIncludeMarkdown,
+          });
+
+          const response = await postJson(endpoint, payload);
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            results.failed += 1;
+            const detail = response.bodyText ? `\n${response.bodyText.trim()}` : "";
+            const message = `同步失败（${response.statusCode}）：${plan.sessionName}${detail}`;
+            void vscode.window.showErrorMessage(message);
+            continue;
+          }
+
+          results.ok += 1;
+          const parsed = tryParseJson(response.bodyText);
+          const projectId = parsed?.project_id;
+          const sessionId = parsed?.session_id;
+          const suffix =
+            projectId || sessionId
+              ? `（project_id=${projectId || "-"}，session_id=${sessionId || "-"}）`
+              : "";
+          void vscode.window.showInformationMessage(
+            `同步成功：${plan.sessionName}${suffix}`,
+          );
+        } catch (err) {
+          results.failed += 1;
+          const message = formatBridgeError(err, bridgeBaseUrl, plan.sessionName);
+          void vscode.window.showErrorMessage(message);
+        }
+      }
+    },
+  );
+
+  if (results.ok === 0 && results.failed === 0) return;
+
+  const summary = `同步完成：成功 ${results.ok}，失败 ${results.failed}`;
+  void vscode.window.showInformationMessage(summary);
 }
 
 function resolveCodexDir() {
@@ -418,14 +622,33 @@ async function exportOneSession(sessionInfo, exportType, outPath, options) {
 
 async function exportMarkdownFromJsonl(sourcePath, outPath, meta, options) {
   const outStream = fs.createWriteStream(outPath, { encoding: "utf8" });
-  outStream.write(`# Codex 聊天记录导出\n\n`);
-  outStream.write(`- 源文件：\`${sourcePath}\`\n`);
-  if (meta?.id) outStream.write(`- sessionId：\`${String(meta.id)}\`\n`);
-  if (meta?.timestamp) outStream.write(`- 开始时间：\`${String(meta.timestamp)}\`\n`);
-  if (meta?.cwd) outStream.write(`- cwd：\`${String(meta.cwd)}\`\n`);
-  if (meta?.originator) outStream.write(`- originator：\`${String(meta.originator)}\`\n`);
-  if (meta?.cli_version) outStream.write(`- cli_version：\`${String(meta.cli_version)}\`\n`);
-  outStream.write(`\n---\n\n`);
+  try {
+    await writeMarkdownFromJsonl(sourcePath, meta, options, outStream);
+  } finally {
+    await new Promise((resolve) => outStream.end(resolve));
+  }
+}
+
+async function renderMarkdownFromJsonl(sourcePath, meta, options) {
+  const chunks = [];
+  const writer = {
+    write: (text) => {
+      chunks.push(String(text));
+    },
+  };
+  await writeMarkdownFromJsonl(sourcePath, meta, options, writer);
+  return chunks.join("");
+}
+
+async function writeMarkdownFromJsonl(sourcePath, meta, options, writer) {
+  writer.write(`# Codex 聊天记录导出\n\n`);
+  writer.write(`- 源文件：\`${sourcePath}\`\n`);
+  if (meta?.id) writer.write(`- sessionId：\`${String(meta.id)}\`\n`);
+  if (meta?.timestamp) writer.write(`- 开始时间：\`${String(meta.timestamp)}\`\n`);
+  if (meta?.cwd) writer.write(`- cwd：\`${String(meta.cwd)}\`\n`);
+  if (meta?.originator) writer.write(`- originator：\`${String(meta.originator)}\`\n`);
+  if (meta?.cli_version) writer.write(`- cli_version：\`${String(meta.cli_version)}\`\n`);
+  writer.write(`\n---\n\n`);
 
   const messageSources = await detectMessageSources(sourcePath);
   const preferEventUserMessages = messageSources.hasEventUserMessage;
@@ -456,15 +679,15 @@ async function exportMarkdownFromJsonl(sourcePath, outPath, meta, options) {
       if (obj.type === "event_msg" && obj.payload && typeof obj.payload === "object") {
         const t = obj.payload.type;
         if (preferEventUserMessages && t === "user_message") {
-          writeTurn(outStream, "用户", ts, obj.payload.message, obj.payload.images);
+          writeTurn(writer, "用户", ts, obj.payload.message, obj.payload.images);
           return;
         }
         if (preferEventAgentMessages && t === "agent_message") {
-          writeTurn(outStream, "Codex", ts, obj.payload.message, null);
+          writeTurn(writer, "Codex", ts, obj.payload.message, null);
           return;
         }
         if (includeAgentReasoning && t === "agent_reasoning") {
-          writeTurn(outStream, "Codex（reasoning）", ts, obj.payload.text, null);
+          writeTurn(writer, "Codex（reasoning）", ts, obj.payload.text, null);
           return;
         }
       }
@@ -473,15 +696,15 @@ async function exportMarkdownFromJsonl(sourcePath, outPath, meta, options) {
         const p = obj.payload;
         if (p.type === "function_call" && typeof p.name === "string") {
           const args = typeof p.arguments === "string" ? p.arguments : "";
-          outStream.write(`### 工具调用：\`${p.name}\`${ts ? `（${ts}）` : ""}\n\n`);
-          if (args) outStream.write("```json\n" + args + "\n```\n\n");
+          writer.write(`### 工具调用：\`${p.name}\`${ts ? `（${ts}）` : ""}\n\n`);
+          if (args) writer.write("```json\n" + args + "\n```\n\n");
           return;
         }
 
         if (includeToolOutputs && p.type === "function_call_output" && typeof p.call_id === "string") {
           const output = typeof p.output === "string" ? p.output : "";
-          outStream.write(`### 工具输出：\`${p.call_id}\`${ts ? `（${ts}）` : ""}\n\n`);
-          if (output) outStream.write("```text\n" + output + "\n```\n\n");
+          writer.write(`### 工具输出：\`${p.call_id}\`${ts ? `（${ts}）` : ""}\n\n`);
+          if (output) writer.write("```text\n" + output + "\n```\n\n");
           return;
         }
       }
@@ -499,11 +722,11 @@ async function exportMarkdownFromJsonl(sourcePath, outPath, meta, options) {
           if (!includeEnvironmentContext && looksLikeEnvironmentContext(text)) return;
 
           if (role === "user") {
-            writeTurn(outStream, "用户", ts, text, null);
+            writeTurn(writer, "用户", ts, text, null);
             return;
           }
           if (role === "assistant") {
-            writeTurn(outStream, "Codex", ts, text, null);
+            writeTurn(writer, "Codex", ts, text, null);
             return;
           }
         }
@@ -518,7 +741,6 @@ async function exportMarkdownFromJsonl(sourcePath, outPath, meta, options) {
     try {
       input.destroy();
     } catch {}
-    await new Promise((resolve) => outStream.end(resolve));
   }
 }
 
@@ -735,6 +957,217 @@ async function detectMessageSources(sourcePath) {
     rl.on("error", () => finish());
     input.on("error", () => finish());
   });
+}
+
+async function buildBridgePayload(options) {
+  const codex = {};
+
+  if (options.syncIncludeRawJsonl) {
+    codex.jsonl_text = await readJsonlForSync(options.sessionInfo.filePath, {
+      includeToolOutputs: options.includeToolOutputs,
+      includeEnvironmentContext: options.includeEnvironmentContext,
+    });
+  }
+
+  if (options.syncIncludeMarkdown) {
+    codex.markdown_text = await renderMarkdownFromJsonl(
+      options.sessionInfo.filePath,
+      options.sessionInfo.meta,
+      {
+        includeAgentReasoning: options.includeAgentReasoning,
+        includeToolCalls: options.includeToolCalls,
+        includeToolOutputs: options.includeToolOutputs,
+        includeEnvironmentContext: options.includeEnvironmentContext,
+      },
+    );
+  }
+
+  if (Object.keys(codex).length === 0) {
+    throw new Error("同步内容为空：请至少开启 JSONL 或 Markdown 上传。");
+  }
+
+  const project = { name: options.projectName };
+  if (options.projectCwd) project.cwd = options.projectCwd;
+  if (options.doneDefinition) project.done_definition = options.doneDefinition;
+
+  const session = {
+    name: options.sessionName,
+    source: options.syncIncludeRawJsonl ? "codex_jsonl" : "codex_markdown",
+  };
+
+  return {
+    project,
+    session,
+    exported_at: new Date().toISOString(),
+    codex,
+  };
+}
+
+async function readJsonlForSync(filePath, options) {
+  const includeToolOutputs = !!options.includeToolOutputs;
+  const includeEnvironmentContext = !!options.includeEnvironmentContext;
+
+  if (includeToolOutputs && includeEnvironmentContext) {
+    return await fs.promises.readFile(filePath, "utf8");
+  }
+
+  return await new Promise((resolve, reject) => {
+    const input = fs.createReadStream(filePath, { encoding: "utf8" });
+    const rl = readline.createInterface({ input, crlfDelay: Infinity });
+    const lines = [];
+
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      try {
+        rl.close();
+      } catch {}
+      try {
+        input.destroy();
+      } catch {}
+      if (err) {
+        reject(err);
+        return;
+      }
+      resolve(lines.join("\n"));
+    };
+
+    rl.on("line", (line) => {
+      const trimmed = String(line || "");
+      if (!trimmed.trim()) {
+        lines.push(line);
+        return;
+      }
+
+      let obj;
+      try {
+        obj = JSON.parse(trimmed);
+      } catch {
+        lines.push(line);
+        return;
+      }
+
+      if (!includeToolOutputs && isToolOutputEntry(obj)) return;
+      if (!includeEnvironmentContext && isEnvironmentContextEntry(obj)) return;
+
+      lines.push(line);
+    });
+
+    rl.on("close", () => finish());
+    rl.on("error", (err) => finish(err));
+    input.on("error", (err) => finish(err));
+  });
+}
+
+function isToolOutputEntry(obj) {
+  return (
+    obj &&
+    obj.type === "response_item" &&
+    obj.payload &&
+    typeof obj.payload === "object" &&
+    obj.payload.type === "function_call_output"
+  );
+}
+
+function isEnvironmentContextEntry(obj) {
+  if (!obj || typeof obj !== "object") return false;
+
+  if (obj.type === "event_msg" && obj.payload && typeof obj.payload === "object") {
+    if (obj.payload.type === "user_message" && typeof obj.payload.message === "string") {
+      return looksLikeEnvironmentContext(obj.payload.message);
+    }
+  }
+
+  if (obj.type === "response_item" && obj.payload && typeof obj.payload === "object") {
+    const p = obj.payload;
+    if (p.type === "message" && typeof p.role === "string") {
+      const text = extractTextFromResponseMessageContent(p.content);
+      return looksLikeEnvironmentContext(text);
+    }
+  }
+
+  return false;
+}
+
+async function postJson(url, payload) {
+  const data = JSON.stringify(payload);
+  const isHttps = url.protocol === "https:";
+  const client = isHttps ? https : http;
+  const port = url.port ? Number(url.port) : isHttps ? 443 : 80;
+
+  return await new Promise((resolve, reject) => {
+    const req = client.request(
+      {
+        method: "POST",
+        hostname: url.hostname,
+        port,
+        path: url.pathname + url.search,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+        },
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          resolve({
+            statusCode: res.statusCode || 0,
+            bodyText: body,
+          });
+        });
+      },
+    );
+
+    req.on("error", (err) => reject(err));
+    req.setTimeout(15000, () => {
+      req.destroy(new Error("请求超时"));
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
+function tryParseJson(text) {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function formatBridgeError(err, baseUrl, sessionName) {
+  const code = err?.code;
+  const prefix = `同步失败：${sessionName}`;
+  if (
+    code === "ECONNREFUSED" ||
+    code === "ENOTFOUND" ||
+    code === "EHOSTUNREACH" ||
+    code === "ETIMEDOUT"
+  ) {
+    return `${prefix}，无法连接 Bridge（${baseUrl}）。请确认 Bridge 已启动。`;
+  }
+  return `${prefix}：${stringifyError(err)}`;
+}
+
+async function promptForRequiredInput(prompt, defaultValue) {
+  const input = await vscode.window.showInputBox({
+    prompt,
+    value: defaultValue || "",
+    ignoreFocusOut: true,
+    validateInput: (value) => {
+      return String(value || "").trim() ? null : "不能为空";
+    },
+  });
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  return trimmed;
 }
 
 function extractTextFromResponseMessageContent(content) {
