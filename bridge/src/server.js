@@ -114,6 +114,29 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
   });
 });
 
+app.post("/bridge/v1/projects/:project_id/generate", (req, res) => {
+  const projectId = String(req.params.project_id || "");
+  return sendError(res, 501, "not_implemented", "Generate is not implemented in Bridge MVP", {
+    project_id: projectId,
+    route: "POST /bridge/v1/projects/:project_id/generate",
+  });
+});
+
+app.post("/bridge/v1/projects/:project_id/sync/open-notebook", (req, res) => {
+  const projectId = String(req.params.project_id || "");
+  return sendError(res, 501, "not_implemented", "Sync to OpenNotebook is not implemented in Bridge MVP", {
+    project_id: projectId,
+    route: "POST /bridge/v1/projects/:project_id/sync/open-notebook",
+  });
+});
+
+app.use((req, res) => {
+  return sendError(res, 404, "not_found", "Route not found", {
+    method: req.method,
+    path: req.originalUrl,
+  });
+});
+
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   if (err && err.type === "entity.too.large") {

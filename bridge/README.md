@@ -22,6 +22,8 @@ Service listens on `127.0.0.1:7331` by default.
 ## Endpoints
 - `GET /bridge/v1/health` -> `ok`
 - `POST /bridge/v1/import/codex-chat`
+- `POST /bridge/v1/projects/{project_id}/generate` -> `501 Not Implemented` (MVP)
+- `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> `501 Not Implemented` (MVP)
 
 ## curl examples
 
