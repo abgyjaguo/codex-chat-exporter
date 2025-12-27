@@ -6,8 +6,8 @@
 
 ## 2. 建议技术栈（可调整）
 - Node.js（与 VS Code 扩展生态一致）
-- HTTP Server：Express/Fastify 均可
-- SQLite：存 project/session/source 映射、生成结果缓存
+- HTTP Server：Express 或 Fastify
+- SQLite：存 project、session、source 映射和生成结果缓存
 
 ## 3. API（MVP 契约）
 
@@ -35,7 +35,7 @@
 | session.name | string | 是 | `2025-12-26-codex` | 会话名 |
 | session.source | string | 否 | `codex_jsonl` | 来源类型，默认 `codex_jsonl` |
 | exported_at | string | 是 | `2025-12-26T00:00:00Z` | 导出时间 |
-| codex.jsonl_text | string | 是 | `{\"type\":\"message\",\"role\":\"user\"}` | JSONL 原文，MVP 必填 |
+| codex.jsonl_text | string | 是 | `{"type":"message","role":"user"}` | JSONL 原文，MVP 必填 |
 | codex.markdown_text | string | 否 | `# Codex Chat` | Markdown 原文，后续可用 |
 
 #### Request 示例
@@ -83,7 +83,13 @@
 
 - API 契约见 `docs/ai-learning-os/SPECS/30-open-notebook-sync.md`
 
-## 4. 数据落库（建议最小表）
+## 4. Message 规范化与 message_id 规则
+- 每条规范化消息生成 `message_id`，格式为 `m-` 加 6 位数字（从 `m-000001` 开始）。
+- 顺序规则：按时间戳升序；时间戳相同或缺失时按原始导入顺序。
+- 同一条原始记录若拆成多条消息，按输出顺序分配连续 id。
+- `message_id` 在同一 session 内唯一，并在重复导入相同数据时保持稳定。
+
+## 5. 数据落库（建议最小表）
 
 - `projects(id, name, cwd, created_at)`
 - `sessions(id, project_id, name, imported_at, source_type)`
@@ -91,7 +97,7 @@
 - `generations(id, session_id, mode, output_json, output_md, created_at)`
 - `notebook_map(project_id, notebook_id, provider, updated_at)`
 
-## 5. 验收标准（MVP）
+## 6. 验收标准（MVP）
 - [ ] Import：能导入 JSONL 并落库，返回稳定 id
-- [ ] Normalize：能产出规范化 `Message[]`（role/timestamp/text 至少齐全）
+- [ ] Normalize：能产出规范化 `Message[]`（role、timestamp、text 至少齐全）
 - [ ] Generate/Sync 接口可先返回 `501 Not Implemented`（但路由与错误格式固定）

@@ -122,7 +122,7 @@
         "id": "sum_001",
         "text": "完成导入与结构化链路",
         "evidence_links": [
-          { "message_id": "m-000123", "quote": "先把导入与结构化跑通" }
+          { "message_id": "m-000123", "quote": "string" }
         ]
       }
     ]
@@ -169,6 +169,12 @@
 - `Summary.md`
 - `StudyPack.md`
 - `Milestones.md`（含 Evidence Map：claim 到 message anchor）
+
+### 4.3 证据链格式
+- `message_id` 生成规则见 `docs/ai-learning-os/SPECS/20-bridge-service-mvp.md`。
+- Markdown 回跳格式固定为：`[m-000123](source://src_0001#m-000123)`。
+- `source_id` 来自生成接口的响应字段，`m-000123` 必须与 Sources 中的锚点一致。
+- `evidence_links[].quote` 可选，建议为源消息的原文片段。
 
 ## 5. 生成策略（MVP 建议）
 
