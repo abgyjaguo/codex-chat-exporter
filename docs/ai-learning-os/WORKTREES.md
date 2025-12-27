@@ -177,6 +177,31 @@ wsl.exe bash -lc "cd /mnt/d/cce-wt-docs && git status -sb"
    - 在新窗口里 `File` → `Open Folder`，选择 `/mnt/d/cce-wt-docs`
    - 打开终端后，提示符应该类似：`guoyw@DESKTOP-0L7GR3N:/mnt/d/cce-wt-docs$`（不会出现 `MINGW64`）
 
+### 2.1.2 常见问题：已经进入 WSL，但还是 not a git repository（带 filesystem boundary 提示）
+
+如果你在 WSL 里看到类似这样：
+
+```text
+uo@DESKTOP-0L7GR3N:/mnt/c/Users/GuoYW$ git status -sb
+fatal: not a git repository (or any parent up to mount point /mnt)
+Stopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).
+```
+
+这通常只说明一件事：你当前目录是 `/mnt/c/Users/GuoYW`，它不是仓库目录，所以 `git status` 找不到 `.git`。
+
+正确做法：先进入 worktree 目录，再执行 `git status`。
+
+以文档窗口为例（其它窗口把路径换成对应 worktree）：
+
+```bash
+pwd
+cd /mnt/d/cce-wt-docs
+pwd
+git status -sb
+```
+
+你应该看到输出包含：`## chore/ai-learning-os-docs`
+
 ### 2.2 原理：为什么这里建议用 WSL
 
 你现在遇到的问题有两层：
