@@ -248,6 +248,50 @@ git status -sb
 不推荐但可以用的方案：
 - `git config --global --add safe.directory '*'`（信任所有目录，安全性差，不建议）
 
+### 2.1.4 常见问题：Remote - WSL 连接到了 `docker-desktop`（Alpine），VS Code Server 启动失败
+
+如果你看到 WSL 日志里有这些关键词：
+- `authorityHierarchy: wsl+docker-desktop`
+- `Probing result: alpine-x86_64`
+- `libstdc++ is required to run the VSCode Server`
+- 并弹窗：`VS Code Server for WSL closed unexpectedly`
+
+说明 VS Code Remote - WSL 正在连接 **Docker Desktop 的 WSL 发行版**（`docker-desktop`，基于 Alpine），而不是你用于开发的 Ubuntu 之类发行版。
+
+推荐修复方式：让 VS Code 连接到 Ubuntu（或你自己的开发 distro）
+
+1) 在 Windows PowerShell 执行，查看有哪些 WSL 发行版：
+
+```powershell
+wsl.exe --list --verbose
+```
+
+2) 把 Ubuntu（或你要用的发行版）设置为默认：
+
+```powershell
+wsl.exe --set-default Ubuntu
+```
+
+如果你的发行版名字不是 `Ubuntu`，把它替换成 `wsl.exe --list --verbose` 里显示的那个名字（例如 `Ubuntu-22.04`）。
+
+3) 关闭所有 VS Code 窗口后重新打开 VS Code，然后用 Remote - WSL 打开项目：
+- `Ctrl+Shift+P` → 运行 `WSL: New Window`
+- 新窗口中 `File → Open Folder` → 输入 `/mnt/d/cce-wt-docs` 回车
+
+备选修复方式（不推荐）：在 `docker-desktop` 里安装 `libstdc++`
+
+只有当你明确要在 `docker-desktop` 里跑 VS Code Server 时才用这个方法。
+
+在 Windows PowerShell 执行：
+
+```powershell
+wsl.exe -d docker-desktop -e sh -lc "apk update && apk add libstdc++"
+```
+
+说明：
+- `docker-desktop` 不是为了日常开发准备的发行版；更推荐你安装 Ubuntu 并作为默认 WSL。
+- 如果你电脑还没有 Ubuntu，可以执行：`wsl.exe --install -d Ubuntu`，装完重启一次电脑。
+
 ### 2.2 原理：为什么这里建议用 WSL
 
 你现在遇到的问题有两层：
