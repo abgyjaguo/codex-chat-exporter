@@ -110,6 +110,39 @@ git status -sb
 - Bridge 窗口：`## feat/bridge-service-mvp`
 - OpenNotebook 窗口：`## feat/open-notebook-sync`
 
+### 2.1 常见问题：终端是 PowerShell，`git status` 报 “not a git repository”
+
+如果你在 VS Code 里看到终端是这样：
+
+```text
+PS C:\Users\GuoYW> git status -sb
+fatal: not a git repository (or any of the parent directories): .git
+```
+
+说明你现在用的是「Windows PowerShell」终端，而且当前目录不是 worktree 目录。
+
+另外一个关键点：你当前这些 worktree 是用 WSL 的 git 创建的，worktree 里的 `.git` 指向的是 WSL 路径（例如 `/mnt/d/codex-chat-exporter-main/.git/worktrees/cce-wt-docs`），Windows 的 git 读不到这个路径，所以在 PowerShell 里即使你 `cd D:\cce-wt-docs` 也会失败。
+
+按下面步骤修复（推荐做法：用 WSL 终端）：
+
+1) 确认 VS Code 窗口是 WSL 环境
+   - 看左下角状态栏是否显示 `WSL:`（例如 `WSL: Ubuntu`）
+   - 如果没有：按 `Ctrl+Shift+P`，运行 `Remote-WSL: New Window`，然后在新窗口打开文件夹 `/mnt/d/cce-wt-docs`
+
+2) 在该窗口打开 WSL 终端（不要用 PowerShell）
+   - VS Code 顶部菜单 `Terminal` → `New Terminal`
+   - 如果默认还是 PowerShell：按 `Ctrl+Shift+P`，运行 `Terminal: Select Default Profile`，选择 `bash`（WSL），再执行一次 `Terminal` → `New Terminal`
+
+3) 在新开的 bash 终端里执行（每个窗口都执行一次）
+
+```bash
+pwd
+cd /mnt/d/cce-wt-docs
+git status -sb
+```
+
+你应该看到输出包含：`## chore/ai-learning-os-docs`
+
 ## 3. 每个窗口具体做什么（避免互相打架）
 
 - 文档窗口（`/mnt/d/cce-wt-docs`，分支 `chore/ai-learning-os-docs`）
