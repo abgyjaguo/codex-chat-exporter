@@ -20,7 +20,11 @@
 
 ## 1. 一次性初始化（推荐命令）
 
-在主仓库目录执行。
+先打开一个 WSL 终端，然后进入主仓库目录：
+
+```bash
+cd /mnt/d/codex-chat-exporter-main
+```
 
 ## 1.1 让 `code` 默认打开 VS Code（而不是 Cursor）
 
@@ -32,7 +36,7 @@
 command -v code
 ```
 
-如果输出是 ` /mnt/d/Program Files/cursor/resources/app/bin/code `，说明当前 `code` 会打开 Cursor，可以用「WSL 本地 wrapper」强制 `code` 打开 VS Code（推荐）：
+如果输出是 `/mnt/d/Program Files/cursor/resources/app/bin/code`，说明当前 `code` 会打开 Cursor，可以用「WSL 本地 wrapper」强制 `code` 打开 VS Code（推荐）：
 
 ```bash
 sudo tee /usr/local/bin/code >/dev/null <<'EOF'
@@ -133,7 +137,7 @@ git status -sb
 ### 4.4 OpenNotebook 窗口（`feat/open-notebook-sync`）
 我在分支 feat/open-notebook-sync，只在 bridge/src/adapters/ 下新增 OpenNotebook 同步适配器代码。请严格按照 docs/ai-learning-os/SPECS/30-open-notebook-sync.md，先做一个 filesystem adapter 作为 MVP（把 sources/notes 写到一个目录），保证幂等与可重试。
 
-## 3. 同步与合并节奏（同机也按协作来）
+## 5. 同步与合并节奏（同机也按协作来）
 
 每个窗口完成一个小可验证点后：
 
@@ -152,7 +156,7 @@ git rebase origin/main
 
 > 如果你没有这个仓库的 push 权限：先 fork 到你自己的 GitHub，然后把 `origin` 指向你的 fork 再推送分支。
 
-## 4. 清理 worktree（可选）
+## 6. 清理 worktree（可选）
 
 ```bash
 git worktree list
