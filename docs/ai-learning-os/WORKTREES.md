@@ -143,6 +143,110 @@ git status -sb
 
 你应该看到输出包含：`## chore/ai-learning-os-docs`
 
+### 2.2 原理：为什么这里建议用 WSL
+
+你现在遇到的问题有两层：
+
+1) 你在 PowerShell 里执行 `git status -sb` 时，当前目录是 `C:\\Users\\GuoYW`，它本来就不是仓库目录，所以会报 “not a git repository”。
+2) 更关键的是：你这些 worktree 是用 WSL 的 git 创建的，worktree 目录里的 `.git` 不是一个文件夹，而是一个文本文件，内容类似这样：
+
+```text
+gitdir: /mnt/d/codex-chat-exporter-main/.git/worktrees/cce-wt-docs
+```
+
+这个 `gitdir:` 路径是 Linux/WSL 的路径格式（例如以 `/mnt/d/` 开头）。当你在 Windows PowerShell 里运行 `git status` 时，实际调用的是 Windows 的 git，它读到上面这个路径后无法找到对应目录，所以会失败。
+
+结论：
+- 只要 worktree 是 WSL git 创建的，就推荐你在 WSL 环境里用 git（最省心的方法是 VS Code 用 `WSL:` 窗口）。
+- 不是“Git 必须用 WSL”，而是“你当前这套 worktree 元数据是 WSL 路径，所以 Windows git 读不懂”。
+
+### 2.3 替代方案 1：继续用 PowerShell，但通过 `wsl.exe` 调用 WSL git
+
+如果你暂时不想折腾 VS Code 的 `WSL:` 窗口，你可以在 PowerShell 里用 `wsl.exe` 执行 git（这样用的是 WSL 的 git，所以能识别以 `/mnt/d/` 开头的路径）。
+
+在 PowerShell 执行：
+
+```powershell
+wsl.exe bash -lc "cd /mnt/d/cce-wt-docs && git status -sb"
+```
+
+提交示例（PowerShell 执行）：
+
+```powershell
+wsl.exe bash -lc "cd /mnt/d/cce-wt-docs && git add -A && git commit -m \"chore: update docs\""
+```
+
+注意：这种方式 VS Code 左侧 Source Control 面板可能仍然不工作，因为它默认用 Windows git；你主要用终端完成 git 操作。
+
+### 2.4 替代方案 2：完全使用 Windows git（重新创建 worktree），就可以在 PowerShell 正常用 git
+
+如果你希望“所有东西都在 Windows 上做”（Windows VS Code + PowerShell + Windows git），建议把 worktree 重新用 Windows git 创建一遍。
+
+步骤 A：先在 WSL 里删除现有 worktree（释放这些分支的占用）
+
+在 WSL 执行：
+
+```bash
+cd /mnt/d/codex-chat-exporter-main
+git worktree remove /mnt/d/cce-wt-docs
+git worktree remove /mnt/d/cce-wt-extension
+git worktree remove /mnt/d/cce-wt-bridge
+git worktree remove /mnt/d/cce-wt-open-notebook
+git worktree list
+```
+
+步骤 B：在 Windows PowerShell 里用 Windows git 重新创建 worktree
+
+在 PowerShell 执行：
+
+```powershell
+cd D:\codex-chat-exporter-main
+git worktree add D:\cce-wt-docs chore/ai-learning-os-docs
+git worktree add D:\cce-wt-extension feat/vscode-sync-to-bridge
+git worktree add D:\cce-wt-bridge feat/bridge-service-mvp
+git worktree add D:\cce-wt-open-notebook feat/open-notebook-sync
+git worktree list
+```
+
+然后用 Windows VS Code 打开（PowerShell 执行）：
+
+```powershell
+code -n D:\cce-wt-docs
+code -n D:\cce-wt-extension
+code -n D:\cce-wt-bridge
+code -n D:\cce-wt-open-notebook
+```
+
+重要原则：选定一种 git 环境后就尽量不要混用（不要一会儿用 WSL git，一会儿用 Windows git 操作同一个仓库），避免出现路径与文件锁相关的怪问题。
+
+### 2.5 替代方案 3：不用 worktree，用多个 clone（更直观，但更占空间）
+
+如果你觉得 worktree 太绕，也可以每个模块一个独立 clone（每个 clone 自带 `.git`，Windows/WSL 都容易理解）。
+
+在 PowerShell 执行：
+
+```powershell
+cd D:\
+git clone https://github.com/abgyjaguo/codex-chat-exporter.git D:\cce-docs
+git clone https://github.com/abgyjaguo/codex-chat-exporter.git D:\cce-extension
+git clone https://github.com/abgyjaguo/codex-chat-exporter.git D:\cce-bridge
+git clone https://github.com/abgyjaguo/codex-chat-exporter.git D:\cce-open-notebook
+
+cd D:\cce-docs
+git checkout -b chore/ai-learning-os-docs origin/main
+
+cd D:\cce-extension
+git checkout -b feat/vscode-sync-to-bridge origin/main
+
+cd D:\cce-bridge
+git checkout -b feat/bridge-service-mvp origin/main
+
+cd D:\cce-open-notebook
+git checkout -b feat/open-notebook-sync origin/main
+```
+
+然后分别用 VS Code 打开这四个目录即可。
+
 ## 3. 每个窗口具体做什么（避免互相打架）
 
 - 文档窗口（`/mnt/d/cce-wt-docs`，分支 `chore/ai-learning-os-docs`）
