@@ -27,8 +27,8 @@ Request（MVP）：
 Response（示例）：
 ```json
 {
-  "project_id": "proj_...",
-  "session_id": "sess_...",
+  "project_id": "proj_0001",
+  "session_id": "sess_0001",
   "message_count": 123,
   "warnings": []
 }
@@ -40,7 +40,7 @@ Response（示例）：
 Request（示例）：
 ```json
 {
-  "session_id": "sess_...",
+  "session_id": "sess_0001",
   "mode": "adult_mvp"
 }
 ```
@@ -53,7 +53,7 @@ Response：见 `docs/ai-learning-os/SPECS/21-bridge-generation.md`
 Request（示例）：
 ```json
 {
-  "session_id": "sess_...",
+  "session_id": "sess_0001",
   "targets": ["sources", "notes"]
 }
 ```
@@ -70,4 +70,3 @@ Request（示例）：
 - [ ] Import：能导入 JSONL 并落库，返回稳定 id
 - [ ] Normalize：能产出规范化 `Message[]`（role/timestamp/text 至少齐全）
 - [ ] Generate/Sync 接口可先返回 `501 Not Implemented`（但路由与错误格式固定）
-

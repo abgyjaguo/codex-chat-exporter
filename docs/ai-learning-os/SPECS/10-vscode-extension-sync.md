@@ -9,12 +9,12 @@
 - 不在扩展侧实现 OpenNotebook 写入（由 Bridge 负责）。
 
 ## 3. 新增命令（建议）
-- `Codex: 同步聊天记录到 Bridge…`
-  - 支持：选择 1..N 个会话（复用现有 quick pick 逻辑）
+- `Codex: 同步聊天记录到 Bridge`
+  - 支持：选择 1 到 N 个会话（复用现有 quick pick 逻辑）
   - 交互：输入/确认 `project_name`、`session_name`（可默认值 + 可编辑）
   - 反馈：进度条 + 成功/失败摘要
 
-> 可选增强：`Codex: 同步最近一次聊天记录到 Bridge…`
+> 可选增强：`Codex: 同步最近一次聊天记录到 Bridge`
 
 ## 4. 配置项（建议，均以 `codexChatExporter.*` 命名）
 - `codexChatExporter.bridgeBaseUrl`：默认 `http://127.0.0.1:7331`
@@ -36,7 +36,7 @@ JSON（建议形态，具体以 Bridge spec 为准）：
   "project": { "name": "xxx", "cwd": "/path/to/workspace" },
   "session": { "name": "yyy", "source": "codex_jsonl" },
   "exported_at": "2025-12-26T00:00:00.000Z",
-  "codex": { "jsonl_text": "...." }
+  "codex": { "jsonl_text": "PASTE_JSONL_TEXT_HERE" }
 }
 ```
 
@@ -49,4 +49,3 @@ JSON（建议形态，具体以 Bridge spec 为准）：
 - Bridge 未启动：提示“无法连接”
 - Bridge 返回 4xx：提示具体错误
 - 多会话同步：进度与失败不影响其它会话
-

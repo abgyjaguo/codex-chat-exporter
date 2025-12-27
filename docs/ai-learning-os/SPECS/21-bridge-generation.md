@@ -23,7 +23,7 @@
       "title": "string",
       "summary": "string",
       "evidence_links": [
-        { "message_id": "m-000123", "quote": "..." }
+        { "message_id": "m-000123", "quote": "先把导入与结构化跑通" }
       ]
     }
   ],
@@ -32,7 +32,7 @@
       "id": "c_001",
       "text": "string",
       "type": "decision|debug|pattern|lesson",
-      "evidence_links": [{ "message_id": "m-000456", "quote": "..." }]
+      "evidence_links": [{ "message_id": "m-000456", "quote": "这个结论来自对应对话片段" }]
     }
   ],
   "study_pack": {
@@ -71,4 +71,3 @@
 - [ ] milestones 数量 3–8（不足/过多需给 warning）
 - [ ] ≥95% claims 带 evidence_links（目标；低于则 warning）
 - [ ] 500 条消息处理时间 ≤ 30s（目标；以本地配置为准）
-

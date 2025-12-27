@@ -5,7 +5,7 @@
 ## MVP-1：闭环打通（P0）
 
 ### 10-vscode-extension（见 `docs/ai-learning-os/SPECS/10-vscode-extension-sync.md`）
-- [ ] 增加命令：`Sync to Bridge…`（可选多会话，后台进度条）
+- [ ] 增加命令：`Sync to Bridge`（可选多会话，后台进度条）
 - [ ] 增加配置：Bridge base URL、默认 project/session 命名、同步开关
 - [ ] 同步时附带最小元信息：project_name、session_name、cwd、Done 标准（可选）
 
@@ -36,4 +36,3 @@
 - [ ] Explain & Fix（从真实问题生成可迁移练习）
 - [ ] Constraint Remix（约束重混练习）
 - [ ] Prompt/Checklist/Playbook 抽取与收藏
-
