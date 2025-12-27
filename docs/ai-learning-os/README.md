@@ -18,6 +18,7 @@
 - 架构：`docs/ai-learning-os/ARCHITECTURE.md`
 - 并行开发（worktree）：`docs/ai-learning-os/WORKTREES.md`
 - Backlog：`docs/ai-learning-os/BACKLOG.md`
+- 不一致点清单：`docs/ai-learning-os/INCONSISTENCIES.md`
 - Specs：
   - `docs/ai-learning-os/SPECS/10-vscode-extension-sync.md`
   - `docs/ai-learning-os/SPECS/20-bridge-service-mvp.md`
