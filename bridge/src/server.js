@@ -1,5 +1,7 @@
+const path = require("path");
 const express = require("express");
-const { stableId } = require("./lib/ids");
+const { openBridgeDb } = require("./db");
+const { stableId, randomId } = require("./lib/ids");
 const { parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
 
@@ -9,11 +11,14 @@ const HOST = process.env.BRIDGE_HOST || "127.0.0.1";
 const PORT_RAW = process.env.BRIDGE_PORT || "7331";
 const PORT = Number(PORT_RAW);
 const BODY_LIMIT = process.env.BRIDGE_BODY_LIMIT || "25mb";
+const DB_PATH = process.env.BRIDGE_DB_PATH || path.join(__dirname, "..", ".data", "bridge.db");
 
 if (!Number.isFinite(PORT) || PORT <= 0) {
   console.error(`Invalid BRIDGE_PORT: ${PORT_RAW}`);
   process.exit(1);
 }
+
+const bridgeDb = openBridgeDb(DB_PATH);
 
 app.use(express.json({ limit: BODY_LIMIT }));
 
@@ -61,11 +66,45 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
     });
   }
 
-  const { message_count, warnings: parseWarnings } = parseCodexJsonl(jsonlText);
+  const { message_count, messages, warnings: parseWarnings } = parseCodexJsonl(jsonlText);
   for (const w of parseWarnings) warnings.push(w);
 
-  const project_id = stableId("proj", projectName, projectCwd);
+  const project_id = stableId("proj", projectCwd);
   const session_id = stableId("sess", project_id, sessionName);
+
+  const now = new Date().toISOString();
+  try {
+    const tx = bridgeDb.db.transaction(() => {
+      bridgeDb.ensureProject({
+        id: project_id,
+        name: projectName,
+        cwd: projectCwd,
+        created_at: now,
+      });
+      bridgeDb.ensureSession({
+        id: session_id,
+        project_id,
+        name: sessionName,
+        imported_at: now,
+        source_type: "codex_jsonl",
+      });
+      bridgeDb.addSource({
+        id: randomId("src"),
+        session_id,
+        exported_at: exportedAt,
+        raw_jsonl: jsonlText,
+        normalized_json: JSON.stringify(messages),
+        warnings_json: JSON.stringify(warnings),
+        message_count,
+        created_at: now,
+      });
+    });
+    tx();
+  } catch (err) {
+    return sendError(res, 500, "db_error", "Failed to persist import into SQLite", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   res.json({
     project_id,

@@ -6,5 +6,9 @@ function stableId(prefix, ...parts) {
   return `${prefix}_${digest}`;
 }
 
-module.exports = { stableId };
+function randomId(prefix) {
+  if (typeof crypto.randomUUID === "function") return `${prefix}_${crypto.randomUUID()}`;
+  return `${prefix}_${crypto.randomBytes(16).toString("hex")}`;
+}
 
+module.exports = { stableId, randomId };

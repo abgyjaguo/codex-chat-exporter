@@ -17,6 +17,7 @@ Service listens on `127.0.0.1:7331` by default.
 ### Environment
 - `BRIDGE_HOST` (default: `127.0.0.1`)
 - `BRIDGE_PORT` (default: `7331`)
+- `BRIDGE_DB_PATH` (default: `bridge/.data/bridge.db`)
 
 ## Endpoints
 - `GET /bridge/v1/health` -> `ok`
