@@ -52,7 +52,7 @@
         },
         "codexChatExporter.onlyVsCodeSessions": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "只显示/导出 VS Code 发起的会话（originator=codex_vscode 或 source=vscode）。"
         },
         "codexChatExporter.includeAgentReasoning": {

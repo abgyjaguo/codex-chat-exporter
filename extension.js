@@ -66,26 +66,27 @@ function deactivate() {}
 module.exports = { activate, deactivate };
 
 async function exportChatCommand(options = {}) {
-  const codexDir = resolveCodexDir();
+  const codexDirs = resolveCodexDirs();
+  const existingCodexDirs = codexDirs.filter((d) => fs.existsSync(d));
 
-  if (!fs.existsSync(codexDir)) {
+  if (existingCodexDirs.length === 0) {
     void vscode.window.showErrorMessage(
-      `未找到 Codex 数据目录：${codexDir}\n\n你可以在设置里配置 codexChatExporter.codexDir。`,
+      `未找到 Codex 数据目录：${resolveCodexDir()}\n\n你可以在设置里配置 codexChatExporter.codexDir。`,
     );
     return;
   }
 
   const config = vscode.workspace.getConfiguration("codexChatExporter");
-  const onlyVsCodeSessions = config.get("onlyVsCodeSessions", true);
+  const onlyVsCodeSessions = config.get("onlyVsCodeSessions", false);
   const includeAgentReasoning = config.get("includeAgentReasoning", false);
   const includeToolCalls = config.get("includeToolCalls", false);
   const includeToolOutputs = config.get("includeToolOutputs", false);
   const includeEnvironmentContext = config.get("includeEnvironmentContext", false);
 
-  const sessions = await discoverSessionFiles(codexDir);
+  const sessions = await discoverSessionFiles(existingCodexDirs);
   if (sessions.length === 0) {
     void vscode.window.showWarningMessage(
-      `未在 ${codexDir} 下找到可导出的会话日志（.jsonl）。`,
+      `未在 Codex 数据目录下找到可导出的会话日志（.jsonl）。\n\n已检查：\n${existingCodexDirs.join("\n")}`,
     );
     return;
   }
@@ -208,17 +209,18 @@ async function exportChatCommand(options = {}) {
 }
 
 async function syncToBridgeCommand(options = {}) {
-  const codexDir = resolveCodexDir();
+  const codexDirs = resolveCodexDirs();
+  const existingCodexDirs = codexDirs.filter((d) => fs.existsSync(d));
 
-  if (!fs.existsSync(codexDir)) {
+  if (existingCodexDirs.length === 0) {
     void vscode.window.showErrorMessage(
-      `未找到 Codex 数据目录：${codexDir}\n\n你可以在设置里配置 codexChatExporter.codexDir。`,
+      `未找到 Codex 数据目录：${resolveCodexDir()}\n\n你可以在设置里配置 codexChatExporter.codexDir。`,
     );
     return;
   }
 
   const config = vscode.workspace.getConfiguration("codexChatExporter");
-  const onlyVsCodeSessions = config.get("onlyVsCodeSessions", true);
+  const onlyVsCodeSessions = config.get("onlyVsCodeSessions", false);
   const includeAgentReasoning = config.get("includeAgentReasoning", false);
   const includeToolCalls = config.get("includeToolCalls", false);
   const includeToolOutputs = config.get("includeToolOutputs", false);
@@ -253,10 +255,10 @@ async function syncToBridgeCommand(options = {}) {
     return;
   }
 
-  const sessions = await discoverSessionFiles(codexDir);
+  const sessions = await discoverSessionFiles(existingCodexDirs);
   if (sessions.length === 0) {
     void vscode.window.showWarningMessage(
-      `未在 ${codexDir} 下找到可同步的会话日志（.jsonl）。`,
+      `未在 Codex 数据目录下找到可同步的会话日志（.jsonl）。\n\n已检查：\n${existingCodexDirs.join("\n")}`,
     );
     return;
   }
@@ -400,6 +402,45 @@ function resolveCodexDir() {
   return path.join(os.homedir(), ".codex");
 }
 
+function getConfiguredCodexDir() {
+  const config = vscode.workspace.getConfiguration("codexChatExporter");
+  const configured = config.get("codexDir", "");
+  if (typeof configured !== "string") return "";
+  return configured.trim();
+}
+
+function resolveCodexDirs() {
+  const configured = getConfiguredCodexDir();
+  if (configured) return [expandHomeDir(configured)];
+
+  const out = [];
+  out.push(path.join(os.homedir(), ".codex"));
+
+  for (const dir of discoverMountedWindowsCodexDirs()) {
+    out.push(dir);
+  }
+
+  return Array.from(new Set(out));
+}
+
+function discoverMountedWindowsCodexDirs() {
+  if (process.platform !== "linux") return [];
+  const usersRoot = "/mnt/c/Users";
+  if (!fs.existsSync(usersRoot)) return [];
+
+  const out = [];
+  for (const entry of safeReadDir(usersRoot)) {
+    if (!entry.isDirectory()) continue;
+    if (!entry.name || entry.name.startsWith(".")) continue;
+
+    const codexDir = path.join(usersRoot, entry.name, ".codex");
+    const sessionsDir = path.join(codexDir, "sessions");
+    if (!fs.existsSync(sessionsDir)) continue;
+    out.push(codexDir);
+  }
+  return out;
+}
+
 function defaultSaveDirectory() {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
   if (folder && typeof folder === "string") return folder;
@@ -419,39 +460,51 @@ function expandHomeDir(p) {
   return p;
 }
 
-async function discoverSessionFiles(codexDir) {
+async function discoverSessionFiles(codexDirOrDirs) {
+  const codexDirs = Array.isArray(codexDirOrDirs) ? codexDirOrDirs : [codexDirOrDirs];
   const out = [];
+  const seen = new Set();
 
-  const sessionsDir = path.join(codexDir, "sessions");
-  const archivedDir = path.join(codexDir, "archived_sessions");
+  for (const codexDir of codexDirs) {
+    if (!codexDir || typeof codexDir !== "string") continue;
 
-  if (fs.existsSync(sessionsDir)) {
-    for (const filePath of walkFiles(sessionsDir)) {
-      if (!filePath.toLowerCase().endsWith(".jsonl")) continue;
-      const stat = safeStat(filePath);
-      out.push({
-        filePath,
-        source: "sessions",
-        mtimeMs: stat?.mtimeMs ?? null,
-        size: stat?.size ?? null,
-        sortKey: stat?.mtimeMs ?? 0,
-      });
+    const sessionsDir = path.join(codexDir, "sessions");
+    const archivedDir = path.join(codexDir, "archived_sessions");
+
+    if (fs.existsSync(sessionsDir)) {
+      for (const filePath of walkFiles(sessionsDir)) {
+        if (!filePath.toLowerCase().endsWith(".jsonl")) continue;
+        if (seen.has(filePath)) continue;
+        seen.add(filePath);
+        const stat = safeStat(filePath);
+        out.push({
+          filePath,
+          codexDir,
+          source: "sessions",
+          mtimeMs: stat?.mtimeMs ?? null,
+          size: stat?.size ?? null,
+          sortKey: stat?.mtimeMs ?? 0,
+        });
+      }
     }
-  }
 
-  if (fs.existsSync(archivedDir)) {
-    for (const entry of safeReadDir(archivedDir)) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.toLowerCase().endsWith(".jsonl")) continue;
-      const filePath = path.join(archivedDir, entry.name);
-      const stat = safeStat(filePath);
-      out.push({
-        filePath,
-        source: "archived_sessions",
-        mtimeMs: stat?.mtimeMs ?? null,
-        size: stat?.size ?? null,
-        sortKey: stat?.mtimeMs ?? 0,
-      });
+    if (fs.existsSync(archivedDir)) {
+      for (const entry of safeReadDir(archivedDir)) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.toLowerCase().endsWith(".jsonl")) continue;
+        const filePath = path.join(archivedDir, entry.name);
+        if (seen.has(filePath)) continue;
+        seen.add(filePath);
+        const stat = safeStat(filePath);
+        out.push({
+          filePath,
+          codexDir,
+          source: "archived_sessions",
+          mtimeMs: stat?.mtimeMs ?? null,
+          size: stat?.size ?? null,
+          sortKey: stat?.mtimeMs ?? 0,
+        });
+      }
     }
   }
 

@@ -41,10 +41,10 @@
 
 ## 配置项
 
-在 VS Code 设置中搜索 `Codex Chat Exporter`：
+在 VS Code 设置中搜索 `Codex Chat Exporter` / `codexChatExporter`，或在命令面板运行 `Preferences: Open Settings (JSON)` 直接编辑：
 
 - `codexChatExporter.codexDir`：Codex 数据目录（默认 `~/.codex`）
-- `codexChatExporter.onlyVsCodeSessions`：仅显示/导出 VS Code 会话
+- `codexChatExporter.onlyVsCodeSessions`：仅显示/导出 VS Code 会话（关闭后可看到 `codex_cli_rs` 等 CLI 会话）
 - `codexChatExporter.includeAgentReasoning`：Markdown 中包含 reasoning
 - `codexChatExporter.includeToolCalls`：Markdown 中包含工具调用
 - `codexChatExporter.includeToolOutputs`：Markdown 中包含工具输出（可能包含敏感信息）
@@ -54,3 +54,5 @@
 - `codexChatExporter.defaultDoneDefinition`：同步时默认 Done 标准（可选）
 - `codexChatExporter.syncIncludeRawJsonl`：同步时包含原始 JSONL
 - `codexChatExporter.syncIncludeMarkdown`：同步时包含 Markdown
+
+> 如果你在 WSL/Remote 环境运行扩展，但 Codex 会话在 Windows（例如 `C:\\Users\\GuoYW\\.codex`），可以把 `codexChatExporter.codexDir` 设置为 `/mnt/c/Users/GuoYW/.codex`。
