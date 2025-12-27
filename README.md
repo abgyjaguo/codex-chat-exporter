@@ -5,6 +5,13 @@
 - Markdown（对话稿，提取 user/agent 消息）
 - 原始 JSONL（完整日志，直接复制）
 
+## AI Learning OS（成人版）文档
+
+你可以基于本扩展继续做“AI 协作复盘 + 学习资产化”（见 PRD）：
+
+- PRD：`AI_Learning_OS_PRD_Adult_v0.2.2.md`
+- 开发文档入口：`docs/ai-learning-os/README.md`
+
 ## 使用方式
 
 1. 在 VS Code 打开本项目目录。
