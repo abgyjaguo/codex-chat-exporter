@@ -11,6 +11,45 @@
 
 在主仓库目录执行。
 
+## 1.1 让 `code` 默认打开 VS Code（而不是 Cursor）
+
+如果你同时装了 Cursor 和 VS Code，WSL 里 `code` 命令可能会优先指向 Cursor，导致 `code <dir>` 打开的是 Cursor。
+
+先检查当前 `code` 指向谁：
+
+```bash
+command -v code
+```
+
+如果输出类似 `.../cursor/.../code`，可以用「WSL 本地 wrapper」强制 `code` 打开 VS Code（推荐）：
+
+```bash
+sudo tee /usr/local/bin/code >/dev/null <<'EOF'
+#!/usr/bin/env bash
+exec "/mnt/d/Program Files/Microsoft VS Code/bin/code" "$@"
+EOF
+sudo chmod +x /usr/local/bin/code
+```
+
+可选：保留一个显式打开 Cursor 的命令：
+
+```bash
+sudo tee /usr/local/bin/code-cursor >/dev/null <<'EOF'
+#!/usr/bin/env bash
+exec "/mnt/d/Program Files/cursor/resources/app/bin/code" "$@"
+EOF
+sudo chmod +x /usr/local/bin/code-cursor
+```
+
+验证：
+
+```bash
+command -v code
+code --version
+```
+
+> 如果你的 VS Code 不在 `D:`，把路径替换成你的实际位置（常见：`/mnt/c/Program Files/Microsoft VS Code/bin/code`）。
+
 先决定 base ref：
 - 如果你已经把 docs/PRD `push` 到远端：用 `origin/main`
 - 如果你只是本地 commit 还没 push：用 `main`
