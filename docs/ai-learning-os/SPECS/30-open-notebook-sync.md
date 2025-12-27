@@ -79,7 +79,12 @@ MVP 可以先做一个 `filesystem` adapter（把 sources 和 notes 写到指定
   - Study Pack（练习、反思、清单）
   - Milestones 与 Evidence Map（claim 到 message anchors）
 
-## 6. 验收标准（MVP）
+## 6. 证据链写入规则
+- Sources Markdown 每条消息必须包含锚点 `<a id="m-000123"></a>`，id 必须与 `message_id` 完全一致。
+- 建议格式为锚点行加消息头行，例如 `#### m-000123 | role | 2025-12-26T00:00:00Z`。
+- Notes 中的回跳链接使用 `source://{source_id}#m-000123` 形式，Syncer 可按目标系统要求改写，但必须保留 `#m-000123`。
+
+## 7. 验收标准（MVP）
 - [ ] 同一 project 多次 sync 不重复创建 notebook
 - [ ] Notes 中的证据引用能回跳到 Sources（至少能定位到某条消息）
 - [ ] 同步失败可重试，错误信息可定位（4xx、5xx、网络、鉴权）
