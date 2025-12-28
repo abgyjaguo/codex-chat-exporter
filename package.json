@@ -15,7 +15,9 @@
   "activationEvents": [
     "onCommand:codexChatExporter.exportChat",
     "onCommand:codexChatExporter.exportLatestChat",
-    "onCommand:codexChatExporter.openCodexDataFolder"
+    "onCommand:codexChatExporter.openCodexDataFolder",
+    "onCommand:codexChatExporter.syncToBridge",
+    "onCommand:codexChatExporter.syncLatestToBridge"
   ],
   "contributes": {
     "commands": [
@@ -30,6 +32,14 @@
       {
         "command": "codexChatExporter.openCodexDataFolder",
         "title": "Codex: 打开 Codex 数据目录"
+      },
+      {
+        "command": "codexChatExporter.syncToBridge",
+        "title": "Codex: 同步聊天记录到 Bridge"
+      },
+      {
+        "command": "codexChatExporter.syncLatestToBridge",
+        "title": "Codex: 同步最近一次聊天记录到 Bridge"
       }
     ],
     "configuration": {
@@ -42,7 +52,7 @@
         },
         "codexChatExporter.onlyVsCodeSessions": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "只显示/导出 VS Code 发起的会话（originator=codex_vscode 或 source=vscode）。"
         },
         "codexChatExporter.includeAgentReasoning": {
@@ -64,6 +74,31 @@
           "type": "boolean",
           "default": false,
           "description": "Markdown 导出中包含 <environment_context>（默认不导出，避免干扰对话内容）。"
+        },
+        "codexChatExporter.bridgeBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7331",
+          "description": "Bridge 服务基础地址。"
+        },
+        "codexChatExporter.defaultProjectName": {
+          "type": "string",
+          "default": "",
+          "description": "默认 project_name（留空则优先使用 workspace folder 名）。"
+        },
+        "codexChatExporter.defaultDoneDefinition": {
+          "type": "string",
+          "default": "",
+          "description": "默认 Done 标准（可选，MVP 可留空）。"
+        },
+        "codexChatExporter.syncIncludeRawJsonl": {
+          "type": "boolean",
+          "default": true,
+          "description": "同步到 Bridge 时是否包含原始 JSONL。"
+        },
+        "codexChatExporter.syncIncludeMarkdown": {
+          "type": "boolean",
+          "default": false,
+          "description": "同步到 Bridge 时是否包含 Markdown。"
         }
       }
     }
