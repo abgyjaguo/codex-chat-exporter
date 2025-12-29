@@ -20,12 +20,12 @@ function formatFsError(error, context) {
   const hints = [];
   if (code === "EACCES" || code === "EPERM") {
     hints.push(
-      `Permission denied. Set ${envVar} to a writable directory (e.g. /tmp/open-notebook or $HOME/open-notebook).`,
+      `Permission denied. Set ${envVar} to a writable directory (e.g. /tmp/open-notebook or $HOME/open-notebook).`
     );
   }
   if (code === "ENOENT") {
     hints.push(
-      `Path not found. Ensure ${envVar} points to an existing/writable directory: ${rootDir}`,
+      `Path not found. Ensure ${envVar} points to an existing/writable directory: ${rootDir}`
     );
   }
 
@@ -51,7 +51,11 @@ function stableId(prefix, value) {
 }
 
 async function ensureDir(dirPath) {
-  await fs.mkdir(dirPath, { recursive: true });
+  try {
+    await fs.mkdir(dirPath, { recursive: true });
+  } catch (error) {
+    throw error;
+  }
 }
 
 async function assertDirectoryExists(dirPath, label) {
@@ -106,7 +110,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     const rootDir = (process.env[envVar] || "").trim();
     if (!rootDir) {
       throw new Error(
-        `${envVar} is not set. Example: ${envVar}=/tmp/open-notebook`,
+        `${envVar} is not set. Example: ${envVar}=/tmp/open-notebook`
       );
     }
     return new FilesystemAdapter(rootDir, { envVar });
@@ -123,7 +127,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: this.rootDir,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
 
@@ -136,7 +140,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: this.notebooksDir,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
 
@@ -166,7 +170,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: sourcesDir,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
 
@@ -179,7 +183,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: notesDir,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
 
@@ -198,7 +202,11 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     await assertDirectoryExists(notebookDir, "Notebook directory");
 
     const sourceId = stableId("src", session);
-    const sourcePath = path.join(notebookDir, "sources", `${sourceId}.md`);
+    const sourcePath = path.join(
+      notebookDir,
+      "sources",
+      `${sourceId}.md`
+    );
     const frontMatter = renderFrontMatter({
       notebook_id: notebookId,
       session,
@@ -212,7 +220,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: sourcePath,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
     return sourceId;
@@ -245,7 +253,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: notePath,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
     return noteId;
@@ -268,7 +276,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw new Error(
-          `Failed to read notebook map: ${this.mapPath}. ${error.message}`,
+          `Failed to read notebook map: ${this.mapPath}. ${error.message}`
         );
       }
     }
@@ -285,7 +293,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
           targetPath: this.mapPath,
           envVar: this.envVar,
           rootDir: this.rootDir,
-        }),
+        })
       );
     }
   }
@@ -297,7 +305,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     } catch (error) {
       if (error.code !== "ENOENT") {
         throw new Error(
-          `Failed to read notebook metadata: ${metaPath}. ${error.message}`,
+          `Failed to read notebook metadata: ${metaPath}. ${error.message}`
         );
       }
     }
@@ -317,7 +325,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
             targetPath: metaPath,
             envVar: this.envVar,
             rootDir: this.rootDir,
-          }),
+          })
         );
       }
       return;
@@ -325,7 +333,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
 
     if (meta.project && meta.project !== project) {
       throw new Error(
-        `Notebook metadata mismatch at ${metaPath}: expected project "${project}".`,
+        `Notebook metadata mismatch at ${metaPath}: expected project "${project}".`
       );
     }
   }
