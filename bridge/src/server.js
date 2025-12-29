@@ -18,7 +18,26 @@ if (!Number.isFinite(PORT) || PORT <= 0) {
   process.exit(1);
 }
 
-const bridgeDb = openBridgeDb(DB_PATH);
+let bridgeDb;
+try {
+  bridgeDb = openBridgeDb(DB_PATH);
+  console.log(`Bridge DB: ${DB_PATH} (${bridgeDb.driver})`);
+} catch (err) {
+  console.error("Failed to open Bridge SQLite database.");
+  if (err && typeof err === "object") {
+    const code = err.code ? String(err.code) : "";
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(code ? `[${code}] ${msg}` : msg);
+    if (err.details) {
+      try {
+        console.error(JSON.stringify(err.details, null, 2));
+      } catch {}
+    }
+  } else {
+    console.error(String(err));
+  }
+  process.exit(1);
+}
 
 app.use(express.json({ limit: BODY_LIMIT }));
 
@@ -74,7 +93,7 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
 
   const now = new Date().toISOString();
   try {
-    const tx = bridgeDb.db.transaction(() => {
+    bridgeDb.transaction(() => {
       bridgeDb.ensureProject({
         id: project_id,
         name: projectName,
@@ -99,7 +118,6 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
         created_at: now,
       });
     });
-    tx();
   } catch (err) {
     return sendError(res, 500, "db_error", "Failed to persist import into SQLite", {
       message: err instanceof Error ? err.message : String(err),
