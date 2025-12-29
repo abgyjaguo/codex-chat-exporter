@@ -81,6 +81,18 @@ function makeBridgeDb(db, driver) {
     });
   }
 
+  function getProjectById(id) {
+    return statements.getProjectById.get({ id }) || null;
+  }
+
+  function getSessionById(id) {
+    return statements.getSessionById.get({ id }) || null;
+  }
+
+  function getLatestSourceBySessionId(session_id) {
+    return statements.getLatestSourceBySessionId.get({ session_id }) || null;
+  }
+
   return {
     db,
     driver,
@@ -88,6 +100,9 @@ function makeBridgeDb(db, driver) {
     ensureProject,
     ensureSession,
     addSource,
+    getProjectById,
+    getSessionById,
+    getLatestSourceBySessionId,
     close: () => {
       if (typeof db.close === "function") db.close();
     },
@@ -116,6 +131,23 @@ function prepareStatements(db) {
        VALUES (
          @id, @session_id, @exported_at, @raw_jsonl, @normalized_json, @warnings_json, @message_count, @created_at
        )`,
+    ),
+    getProjectById: db.prepare(
+      `SELECT id, name, cwd, created_at
+       FROM projects
+       WHERE id = @id`,
+    ),
+    getSessionById: db.prepare(
+      `SELECT id, project_id, name, imported_at, source_type
+       FROM sessions
+       WHERE id = @id`,
+    ),
+    getLatestSourceBySessionId: db.prepare(
+      `SELECT id, session_id, exported_at, raw_jsonl, normalized_json, warnings_json, message_count, created_at
+       FROM sources
+       WHERE session_id = @session_id
+       ORDER BY created_at DESC
+       LIMIT 1`,
     ),
   };
 }
