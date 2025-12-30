@@ -4,6 +4,12 @@ const { openBridgeDb } = require("./db");
 const { stableId, randomId } = require("./lib/ids");
 const { parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
+const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
+const {
+  anchorForIndex,
+  renderSourceMarkdown,
+  renderPlaceholderNotes,
+} = require("./lib/openNotebookContent");
 
 const app = express();
 
@@ -18,7 +24,26 @@ if (!Number.isFinite(PORT) || PORT <= 0) {
   process.exit(1);
 }
 
-const bridgeDb = openBridgeDb(DB_PATH);
+let bridgeDb;
+try {
+  bridgeDb = openBridgeDb(DB_PATH);
+  console.log(`Bridge DB: ${DB_PATH} (${bridgeDb.driver})`);
+} catch (err) {
+  console.error("Failed to open Bridge SQLite database.");
+  if (err && typeof err === "object") {
+    const code = err.code ? String(err.code) : "";
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(code ? `[${code}] ${msg}` : msg);
+    if (err.details) {
+      try {
+        console.error(JSON.stringify(err.details, null, 2));
+      } catch {}
+    }
+  } else {
+    console.error(String(err));
+  }
+  process.exit(1);
+}
 
 app.use(express.json({ limit: BODY_LIMIT }));
 
@@ -74,7 +99,7 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
 
   const now = new Date().toISOString();
   try {
-    const tx = bridgeDb.db.transaction(() => {
+    bridgeDb.transaction(() => {
       bridgeDb.ensureProject({
         id: project_id,
         name: projectName,
@@ -99,7 +124,6 @@ app.post("/bridge/v1/import/codex-chat", (req, res) => {
         created_at: now,
       });
     });
-    tx();
   } catch (err) {
     return sendError(res, 500, "db_error", "Failed to persist import into SQLite", {
       message: err instanceof Error ? err.message : String(err),
@@ -124,10 +148,146 @@ app.post("/bridge/v1/projects/:project_id/generate", (req, res) => {
 
 app.post("/bridge/v1/projects/:project_id/sync/open-notebook", (req, res) => {
   const projectId = String(req.params.project_id || "");
-  return sendError(res, 501, "not_implemented", "Sync to OpenNotebook is not implemented in Bridge MVP", {
-    project_id: projectId,
-    route: "POST /bridge/v1/projects/:project_id/sync/open-notebook",
-  });
+
+  const body = req.body;
+  if (!body || typeof body !== "object") {
+    return sendError(res, 400, "invalid_request", "Request body must be JSON");
+  }
+
+  const sessionId = typeof body.session_id === "string" ? body.session_id.trim() : "";
+  const targetsRaw = body.targets;
+
+  if (!sessionId) {
+    return sendError(res, 400, "invalid_request", "session_id must be a non-empty string");
+  }
+
+  let targets = ["sources", "notes"];
+  if (Array.isArray(targetsRaw)) {
+    targets = targetsRaw.map((t) => String(t || "").trim()).filter(Boolean);
+  }
+
+  const wantSources = targets.includes("sources");
+  const wantNotes = targets.includes("notes");
+  if (!wantSources && !wantNotes) {
+    return sendError(res, 400, "invalid_request", "targets must include at least one of: sources, notes");
+  }
+
+  const rootDir = (process.env[OPEN_NOTEBOOK_FS_ROOT_ENV] || "").trim();
+  if (!rootDir) {
+    return sendError(
+      res,
+      400,
+      "invalid_request",
+      `OpenNotebook filesystem root is not set. Please set ${OPEN_NOTEBOOK_FS_ROOT_ENV} to a writable directory.`,
+    );
+  }
+
+  const projectRow = bridgeDb.getProjectById(projectId);
+  if (!projectRow) {
+    return sendError(res, 404, "not_found", "Project not found", { project_id: projectId });
+  }
+
+  const sessionRow = bridgeDb.getSessionById(sessionId);
+  if (!sessionRow) {
+    return sendError(res, 404, "not_found", "Session not found", { session_id: sessionId });
+  }
+  if (sessionRow.project_id !== projectId) {
+    return sendError(res, 400, "invalid_request", "session_id does not belong to project_id", {
+      project_id: projectId,
+      session_id: sessionId,
+    });
+  }
+
+  const sourceRow = bridgeDb.getLatestSourceBySessionId(sessionId);
+  if (!sourceRow) {
+    return sendError(res, 404, "not_found", "No imported source found for session", { session_id: sessionId });
+  }
+
+  let messages = [];
+  try {
+    const parsed = JSON.parse(sourceRow.normalized_json);
+    if (Array.isArray(parsed)) messages = parsed;
+  } catch (err) {
+    return sendError(res, 500, "invalid_state", "Failed to parse normalized_json for session source", {
+      session_id: sessionId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  const adapter = FilesystemAdapter.fromEnv(OPEN_NOTEBOOK_FS_ROOT_ENV);
+
+  const notebookProjectKey = projectRow.cwd;
+  const notebookIdPromise = adapter.createOrGetNotebook(notebookProjectKey);
+
+  Promise.resolve(notebookIdPromise)
+    .then(async (notebookId) => {
+      const project = { id: projectRow.id, name: projectRow.name, cwd: projectRow.cwd };
+      const session = { id: sessionRow.id, name: sessionRow.name };
+
+      let sourceId = null;
+      if (wantSources) {
+        const sourceMarkdown = renderSourceMarkdown({
+          project,
+          session,
+          project_id: projectId,
+          session_id: sessionId,
+          messages,
+        });
+        sourceId = await adapter.upsertSource(notebookId, sessionId, sourceMarkdown);
+      }
+
+      const noteIds = {};
+      const noteKinds = [];
+      if (wantNotes) {
+        if (!sourceId) {
+          return sendError(res, 500, "invalid_state", "Cannot write notes without sources in MVP sync", {
+            project_id: projectId,
+            session_id: sessionId,
+          });
+        }
+
+        const notes = renderPlaceholderNotes({
+          project,
+          session,
+          project_id: projectId,
+          session_id: sessionId,
+          sourceId,
+          messages,
+        });
+
+        noteKinds.push("summary", "study-pack", "milestones");
+
+        const links = [];
+        if (messages.length >= 1) links.push(anchorForIndex(0));
+        if (messages.length >= 2) links.push(anchorForIndex(1));
+        if (messages.length >= 3) links.push(anchorForIndex(2));
+
+        for (const kind of noteKinds) {
+          const content = notes[kind] || notes[kind.replace(/_/g, "-")] || "";
+          noteIds[kind] = await adapter.upsertNote(notebookId, kind, content, links);
+        }
+      }
+
+      res.json({
+        notebook: {
+          adapter: "filesystem",
+          root_dir: rootDir,
+          project_key: notebookProjectKey,
+          notebook_id: notebookId,
+        },
+        project_id: projectId,
+        session_id: sessionId,
+        source_id: sourceId,
+        notes: noteIds,
+      });
+    })
+    .catch((err) => {
+      return sendError(res, 500, "sync_failed", "Failed to sync to OpenNotebook filesystem adapter", {
+        project_id: projectId,
+        session_id: sessionId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    });
 });
 
 app.use((req, res) => {
