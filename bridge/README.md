@@ -20,12 +20,17 @@ Service listens on `127.0.0.1:7331` by default.
 - `BRIDGE_HOST` (default: `127.0.0.1`)
 - `BRIDGE_PORT` (default: `7331`)
 - `BRIDGE_DB_PATH` (default: `bridge/.data/bridge.db`)
+- `BRIDGE_PUBLIC_BASE_URL` (optional, e.g. `http://127.0.0.1:7331`)
+  - Used to generate **absolute** `Open in Replay` links for exported/published Markdown.
 
 ## Endpoints
+- `GET /replay` -> Replay index (stub UI)
+- `GET /replay/projects/{project_id}/sessions/{session_id}` -> Replay session transcript (stub UI; anchors like `#m-000123`)
 - `GET /bridge/v1/health` -> `ok`
 - `POST /bridge/v1/import/codex-chat`
 - `POST /bridge/v1/projects/{project_id}/generate` -> `501 Not Implemented` (MVP)
-- `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> `501 Not Implemented` (MVP)
+- `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> Sync Sources + placeholder Notes into OpenNotebook FS adapter
+  - If `BRIDGE_PUBLIC_BASE_URL` is set, Notes include `Open in Replay` deep links like `{BRIDGE_PUBLIC_BASE_URL}/replay/projects/{project_id}/sessions/{session_id}#m-000123`.
 
 ## Troubleshooting
 - 如果在 WSL 里跑到了 Windows 的 `node/npm`（路径里出现 `D:\\...`），容易出现依赖二进制不匹配问题；建议统一在同一环境里执行 `npm install` + `npm start`（WSL 用 Linux Node，Windows 用 PowerShell/CMD）。

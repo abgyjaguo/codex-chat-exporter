@@ -6,7 +6,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "verify:replay": "node scripts/verify-replay-fixture.js"
   },
   "dependencies": {
     "express": "^4.19.2"

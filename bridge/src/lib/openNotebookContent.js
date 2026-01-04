@@ -1,13 +1,14 @@
 const path = require("path");
 
 const { redactText } = require("./redact");
+const { messageIdForIndex } = require("./messageIds");
+const { replayMessageUrl, replaySessionUrl } = require("./replayUrls");
 
 function anchorForIndex(index) {
-  const n = Number(index) + 1;
-  return `m-${String(n).padStart(6, "0")}`;
+  return messageIdForIndex(index);
 }
 
-function renderSourceMarkdown({ project, session, project_id, session_id, messages }) {
+function renderSourceMarkdown({ project, session, project_id, session_id, messages, replayBaseUrl = null }) {
   const lines = [];
   lines.push("# Codex Session Source", "");
   lines.push(`- project_id: \`${project_id}\``);
@@ -16,6 +17,14 @@ function renderSourceMarkdown({ project, session, project_id, session_id, messag
   lines.push(`- session_id: \`${session_id}\``);
   lines.push(`- session: \`${session.name}\``);
   lines.push(`- message_count: \`${messages.length}\``);
+
+  const replayUrl = replaySessionUrl({ projectId: project_id, sessionId: session_id, baseUrl: replayBaseUrl });
+  if (replayBaseUrl) {
+    lines.push(`- Open in Replay: ${replayUrl}`);
+  } else {
+    lines.push(`- Open in Replay: _(set \`BRIDGE_PUBLIC_BASE_URL\` to generate an absolute link)_`);
+  }
+
   lines.push("", "---", "");
 
   for (let i = 0; i < messages.length; i += 1) {
@@ -36,14 +45,23 @@ function relativeLinkToSourceAnchor(sourceId, anchor) {
   return `${sourceRel}#${anchor}`;
 }
 
-function renderPlaceholderNotes({ project, session, project_id, session_id, sourceId, messages }) {
+function renderPlaceholderNotes({ project, session, project_id, session_id, sourceId, messages, replayBaseUrl = null }) {
   const anchors = [];
   if (messages.length >= 1) anchors.push(anchorForIndex(0));
   if (messages.length >= 2) anchors.push(anchorForIndex(1));
   if (messages.length >= 3) anchors.push(anchorForIndex(2));
 
   const evidenceLines = anchors.length
-    ? anchors.map((a) => `- [${a}](${relativeLinkToSourceAnchor(sourceId, a)})`)
+    ? anchors.map((a) => {
+        const sourceLink = relativeLinkToSourceAnchor(sourceId, a);
+        const replayLink = replayBaseUrl
+          ? replayMessageUrl({ projectId: project_id, sessionId: session_id, messageId: a, baseUrl: replayBaseUrl })
+          : null;
+
+        return replayLink
+          ? `- [${a}](${sourceLink}) · [Open in Replay](${replayLink})`
+          : `- [${a}](${sourceLink}) · _(set \`BRIDGE_PUBLIC_BASE_URL\` for Open in Replay)_`;
+      })
     : ["- (no messages)"];
 
   const summary = [

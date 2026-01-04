@@ -93,6 +93,10 @@ function makeBridgeDb(db, driver) {
     return statements.getLatestSourceBySessionId.get({ session_id }) || null;
   }
 
+  function listRecentSessions({ limit }) {
+    return statements.listRecentSessions.all({ limit }) || [];
+  }
+
   return {
     db,
     driver,
@@ -103,6 +107,7 @@ function makeBridgeDb(db, driver) {
     getProjectById,
     getSessionById,
     getLatestSourceBySessionId,
+    listRecentSessions,
     close: () => {
       if (typeof db.close === "function") db.close();
     },
@@ -148,6 +153,19 @@ function prepareStatements(db) {
        WHERE session_id = @session_id
        ORDER BY created_at DESC
        LIMIT 1`,
+    ),
+    listRecentSessions: db.prepare(
+      `SELECT
+         s.id AS session_id,
+         s.project_id AS project_id,
+         s.name AS session_name,
+         s.imported_at AS imported_at,
+         p.name AS project_name,
+         p.cwd AS project_cwd
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       ORDER BY s.imported_at DESC
+       LIMIT @limit`,
     ),
   };
 }

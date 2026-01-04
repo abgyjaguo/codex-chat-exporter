@@ -1,0 +1,4 @@
+{"type":"event_msg","timestamp":"2026-01-01T00:00:00.000Z","payload":{"type":"user_message","message":"Hello Replay stub!\\nThis line contains HTML-like text: <script>alert(1)</script>"}}
+{"type":"event_msg","timestamp":"2026-01-01T00:00:01.000Z","payload":{"type":"agent_message","message":"Got it. Here is a code block:\\n\\n```js\\nconsole.log('hi')\\n```"}}
+{"type":"event_msg","timestamp":"2026-01-01T00:00:02.000Z","payload":{"type":"user_message","message":"Can you summarize the last response?"}}
+{"type":"event_msg","timestamp":"2026-01-01T00:00:03.000Z","payload":{"type":"agent_message","message":"Summary: It contained a JavaScript code block printing 'hi'."}}
