@@ -1,6 +1,14 @@
-# 同机多开 VSCode + Codex 的 worktree 工作流
+﻿# 同机多开 VSCode + Codex 的 worktree 工作流
 
 > 目标：同一台电脑并行做不同模块：每个模块一个 worktree + 一个 VSCode 窗口 + 一个 Codex 会话；互不切分支、互不串上下文。
+
+## 重要：Windows vs WSL 只能选一个主环境
+
+- 如果你在 **Windows PowerShell** 里跑 `git`/`codex`：请用 **Windows 路径**（如 `D:\cce-wt-bridge`）创建/管理 worktree。
+- 如果你在 **WSL** 里跑 `git`/`codex`：请用 **WSL 路径**（如 `/mnt/d/cce-wt-bridge`）创建/管理 worktree。
+- **不要混用**同一个 worktree：否则 `.git` 指向的 `gitdir` 路径可能在另一个环境不可用，常见报错包括：
+  - `fatal: not a git repository: /mnt/d/.../.git/worktrees/...`
+  - 在一个环境执行 `git worktree prune` 把另一个环境的 worktree 误判为 prunable
 
 ## 你的电脑当前情况（已确认）
 
@@ -419,7 +427,7 @@ git checkout -b feat/open-notebook-sync origin/main
 ## 3. 每个窗口具体做什么（避免互相打架）
 
 - 文档窗口（`/mnt/d/cce-wt-docs`，分支 `chore/ai-learning-os-docs`）
-  - 只改：`docs/ai-learning-os/`、`AI_Learning_OS_PRD_Adult_v0.2.2.md`
+  - 只改：`docs/ai-learning-os/`、`prd/`
 - 扩展窗口（`/mnt/d/cce-wt-extension`，分支 `feat/vscode-sync-to-bridge`）
   - 只改：`extension.js`、`package.json`、`README.md`
 - Bridge 窗口（`/mnt/d/cce-wt-bridge`，分支 `feat/bridge-service-mvp`）
@@ -432,7 +440,7 @@ git checkout -b feat/open-notebook-sync origin/main
 你在对应窗口打开 Codex 扩展的聊天面板后，把下面对应段落原样发给 Codex。
 
 ### 4.1 文档窗口（`chore/ai-learning-os-docs`）
-我在分支 chore/ai-learning-os-docs，只修改 docs/ai-learning-os/ 和 AI_Learning_OS_PRD_Adult_v0.2.2.md。请不要修改 extension.js、package.json 或 bridge/ 相关代码。目标是把架构、接口与工作流文档写清楚，作为其他分支的开发契约。
+我在分支 chore/ai-learning-os-docs，只修改 docs/ai-learning-os/ 和 prd/。请不要修改 extension.js、package.json 或 bridge/ 相关代码。目标是把架构、接口与工作流文档写清楚，作为其他分支的开发契约。
 
 ### 4.2 扩展窗口（`feat/vscode-sync-to-bridge`）
 我在分支 feat/vscode-sync-to-bridge，只修改 extension.js、package.json、README.md。请严格按照 docs/ai-learning-os/SPECS/10-vscode-extension-sync.md 实现：新增同步到 Bridge 的命令与配置项，并确保默认不上传 tool outputs 与 environment context。
@@ -441,7 +449,7 @@ git checkout -b feat/open-notebook-sync origin/main
 我在分支 feat/bridge-service-mvp，只在 bridge/ 目录下新增代码。请严格按照 docs/ai-learning-os/SPECS/20-bridge-service-mvp.md 实现 Bridge 服务骨架与 import 接口（POST /bridge/v1/import/codex-chat），并把数据落到 SQLite（先最小可用）。
 
 ### 4.4 OpenNotebook 窗口（`feat/open-notebook-sync`）
-我在分支 feat/open-notebook-sync，只在 bridge/src/adapters/ 下新增 OpenNotebook 同步适配器代码。请严格按照 docs/ai-learning-os/SPECS/30-open-notebook-sync.md，先做一个 filesystem adapter 作为 MVP（把 sources/notes 写到一个目录），保证幂等与可重试。
+我在分支 feat/open-notebook-sync，只在 bridge/src/adapters/ 下新增 OpenNotebook 同步适配器代码。请严格按照 docs/ai-learning-os/SPECS/30-open-notebook-sync.md，优先对接 OpenNotebook HTTP API（OPEN_NOTEBOOK_API_URL），保留 filesystem adapter 作为离线/调试路径，保证幂等与可重试，并确保证据回跳最终指向 Replay UI。
 
 ## 5. 同步与合并节奏（同机也按协作来）
 
@@ -469,3 +477,4 @@ git worktree list
 git worktree remove ../cce-wt-open-notebook
 git branch -D feat/open-notebook-sync
 ```
+
