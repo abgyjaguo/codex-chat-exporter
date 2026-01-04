@@ -6,6 +6,7 @@ const os = require("os");
 const path = require("path");
 
 const { OpenNotebookAdapter } = require("./adapter");
+const { redactForOpenNotebookMarkdown } = require("../lib/redact");
 
 const DEFAULT_API_URL_ENV_VAR = "OPEN_NOTEBOOK_API_URL";
 const DEFAULT_APP_PASSWORD_ENV_VAR = "OPEN_NOTEBOOK_APP_PASSWORD";
@@ -355,9 +356,11 @@ class OpenNotebookHttpAdapter extends OpenNotebookAdapter {
     assertNonEmpty(session, "session");
     assertNonEmpty(content, "content");
 
+    const sanitizedContent = redactForOpenNotebookMarkdown(content);
+
     const sessionKey = stableId("src", session);
     const title = sourceTitleForSession(session);
-    const contentHash = sha256Hex(content);
+    const contentHash = sha256Hex(sanitizedContent);
 
     const state = await this.#loadState();
     state.sources[notebookId] = state.sources[notebookId] || {};
@@ -384,7 +387,7 @@ class OpenNotebookHttpAdapter extends OpenNotebookAdapter {
     const created = await this.#createTextSource({
       notebookId,
       title,
-      content,
+      content: sanitizedContent,
       embed: this.embedByDefault,
       asyncProcessing: this.asyncProcessingByDefault,
     });
@@ -409,13 +412,15 @@ class OpenNotebookHttpAdapter extends OpenNotebookAdapter {
       throw new Error("links must be an array of strings.");
     }
 
+    const sanitizedContent = redactForOpenNotebookMarkdown(content);
+
     const noteKey = stableId("note", kind);
     const title = noteTitleForKind(kind);
     const body = `${renderFrontMatter({
       notebook_id: notebookId,
       kind,
       links,
-    })}${content}\n`;
+    })}${sanitizedContent}\n`;
     const contentHash = sha256Hex(body);
 
     const state = await this.#loadState();
