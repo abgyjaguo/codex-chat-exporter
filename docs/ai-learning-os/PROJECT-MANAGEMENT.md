@@ -18,6 +18,24 @@
 - [ ] 重启 Codex CLI，确保 `github` MCP server 可启动
 - [ ] 你在 Codex 里执行的 “PM 指令” 已在 GitHub 上创建 Project/Issues/字段，并能在网页上看到
 
+## FAQ：为什么我在 `main` 看不到本文件？
+
+如果你是在 `D:\\codex-chat-exporter-main`（`main` 分支工作区）里找 `docs/ai-learning-os/PROJECT-MANAGEMENT.md`，但发现文件“不见了”，通常原因是：
+
+- 该文件在**另一个 worktree / 分支**里（例如 `D:\\cce-wt-pm` 的 `chore/pm-and-spec`），尚未通过 PR 合并回 `main`。
+
+你可以这样确认：
+
+```powershell
+git worktree list
+cd D:\\cce-wt-pm
+git status -sb
+```
+
+解决方式：
+- 直接在 `D:\\cce-wt-pm` 里继续维护本文档；或
+- 在 GitHub 上为 `chore/pm-and-spec` 创建 PR 并合并到 `main`，之后 `main` 工作区就会出现该文件。
+
 ## 1) 一次性配置（只做一次）
 
 ### 1.1 配置 GitHub MCP（托管服务）
