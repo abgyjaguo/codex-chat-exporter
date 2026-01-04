@@ -20,10 +20,17 @@ Service listens on `127.0.0.1:7331` by default.
 - `BRIDGE_HOST` (default: `127.0.0.1`)
 - `BRIDGE_PORT` (default: `7331`)
 - `BRIDGE_DB_PATH` (default: `bridge/.data/bridge.db`)
+- `BRIDGE_EXPORTS_DIR` (default: `<dirname(BRIDGE_DB_PATH)>/exports`)
+
+### Specs (source of truth)
+- OpenSpec change: `openspec/changes/add-export-center-api/specs/bridge-export-center/spec.md`
 
 ## Endpoints
 - `GET /bridge/v1/health` -> `ok`
 - `POST /bridge/v1/import/codex-chat`
+- `POST /bridge/v1/exports`
+- `GET /bridge/v1/exports`
+- `GET /bridge/v1/exports/{export_id}/download`
 - `POST /bridge/v1/projects/{project_id}/generate` -> `501 Not Implemented` (MVP)
 - `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> `501 Not Implemented` (MVP)
 
@@ -50,4 +57,12 @@ curl -sS http://127.0.0.1:7331/bridge/v1/import/codex-chat \\
     \"exported_at\": \"2025-12-26T00:00:00.000Z\",
     \"codex\": {\"jsonl_text\": \"{\\\\\"type\\\\\":\\\\\"event_msg\\\\\",\\\\\"timestamp\\\\\":\\\\\"2025-12-26T00:00:00.000Z\\\\\",\\\\\"payload\\\\\":{\\\\\"type\\\\\":\\\\\"user_message\\\\\",\\\\\"message\\\\\":\\\\\"hi\\\\\"}}\\n{\\\\\"type\\\\\":\\\\\"event_msg\\\\\",\\\\\"timestamp\\\\\":\\\\\"2025-12-26T00:00:01.000Z\\\\\",\\\\\"payload\\\\\":{\\\\\"type\\\\\":\\\\\"agent_message\\\\\",\\\\\"message\\\\\":\\\\\"hello\\\\\"}}\"}
   }'
+```
+
+Create export ZIP (session scope):
+
+```bash
+curl -sS -X POST http://127.0.0.1:7331/bridge/v1/exports \\
+  -H 'content-type: application/json' \\
+  -d '{"scope":{"project_id":"proj_...","session_id":"sess_..."},"includes":{"sessions":true},"version":"v0.3.4"}'
 ```
