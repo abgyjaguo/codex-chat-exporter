@@ -10,16 +10,27 @@
   - `fatal: not a git repository: /mnt/d/.../.git/worktrees/...`
   - 在一个环境执行 `git worktree prune` 把另一个环境的 worktree 误判为 prunable
 
-## 你的电脑当前情况（已确认）
+## 推荐目录（Windows / WSL 二选一）
 
+如果你使用 Windows（PowerShell）：
+- 主仓库目录：`D:\codex-chat-exporter-main`
+- 推荐 worktree（不存在就按 1.2 创建/重建；和 `docs/ai-learning-os/PROJECT-MANAGEMENT.md` 对齐）：
+  - `D:\cce-wt-pm`（PM/Spec/Docs：`chore/pm-and-spec` 或其它 *chore/* 分支）
+  - `D:\cce-wt-export`（`feat/export-center-api`）
+  - `D:\cce-wt-replay`（`feat/replay-stub`）
+  - `D:\cce-wt-import`（`feat/harden-bridge-import`）
+  - `D:\cce-wt-privacy`（`feat/expand-privacy-redaction`）
+
+如果你使用 WSL（bash）：
 - 主仓库目录：`/mnt/d/codex-chat-exporter-main`
-- VS Code（Windows）CLI：`/mnt/d/Program Files/Microsoft VS Code/bin/code`
-- Cursor（Windows）CLI：`/mnt/d/Program Files/cursor/resources/app/bin/code`
-- 约定使用 4 个 worktree 目录（不存在就按 1.2 创建/重建）：
-  - `/mnt/d/cce-wt-docs`（分支：`chore/ai-learning-os-docs`）
-  - `/mnt/d/cce-wt-extension`（分支：`feat/vscode-sync-to-bridge`）
-  - `/mnt/d/cce-wt-bridge`（分支：`feat/bridge-service-mvp`）
-  - `/mnt/d/cce-wt-open-notebook`（分支：`feat/open-notebook-sync`）
+- 推荐 worktree：
+  - `/mnt/d/cce-wt-pm`（同上）
+  - `/mnt/d/cce-wt-export`
+  - `/mnt/d/cce-wt-replay`
+  - `/mnt/d/cce-wt-import`
+  - `/mnt/d/cce-wt-privacy`
+
+> 说明：本文后面的 2.x 故障排查里，可能还会出现 `cce-wt-docs/cce-wt-extension/...` 这些旧目录名；按你的实际 worktree 目录替换即可，原理不变。
 
 ## 0. 前置原则（很重要）
 
@@ -27,6 +38,49 @@
 - **单窗口单模块**：尽量做到“一个目录只由一个窗口修改”（冲突会显著减少）。
 
 ## 1. 一次性初始化（推荐命令）
+
+### 1.1 Windows（PowerShell）快速开始（推荐）
+
+```powershell
+cd D:\codex-chat-exporter-main
+
+# 保证 main 是最新（只读仓库也可以 pull）
+git checkout main
+git pull --rebase origin main
+
+# 第一次创建（会自动创建分支）
+git worktree add D:\cce-wt-pm -b chore/pm-and-spec main
+git worktree add D:\cce-wt-export -b feat/export-center-api main
+git worktree add D:\cce-wt-replay -b feat/replay-stub main
+git worktree add D:\cce-wt-import -b feat/harden-bridge-import main
+git worktree add D:\cce-wt-privacy -b feat/expand-privacy-redaction main
+
+git worktree list
+```
+
+如果上面某条命令报错 `fatal: a branch named 'xxx' already exists`，说明分支已存在但 worktree 目录不存在，这时用“重建 worktree（复用已有分支）”的命令：
+
+```powershell
+cd D:\codex-chat-exporter-main
+git worktree add D:\cce-wt-pm chore/pm-and-spec
+git worktree add D:\cce-wt-export feat/export-center-api
+git worktree add D:\cce-wt-replay feat/replay-stub
+git worktree add D:\cce-wt-import feat/harden-bridge-import
+git worktree add D:\cce-wt-privacy feat/expand-privacy-redaction
+git worktree list
+```
+
+然后分别打开 VS Code 窗口（`-n` 表示每次都开新窗口）：
+
+```powershell
+code -n D:\cce-wt-pm
+code -n D:\cce-wt-export
+code -n D:\cce-wt-replay
+code -n D:\cce-wt-import
+code -n D:\cce-wt-privacy
+```
+
+### 1.2 WSL（bash）快速开始
 
 先打开一个 WSL 终端，然后进入主仓库目录：
 
@@ -36,7 +90,7 @@ cd /mnt/d/codex-chat-exporter-main
 
 ## 1.1 让 `code` 默认打开 VS Code（而不是 Cursor）
 
-如果你同时装了 Cursor 和 VS Code，WSL 里 `code` 命令可能会优先指向 Cursor，导致 `code -n /mnt/d/cce-wt-docs` 打开的是 Cursor。
+如果你同时装了 Cursor 和 VS Code，WSL 里 `code` 命令可能会优先指向 Cursor，导致 `code -n /mnt/d/cce-wt-pm` 打开的是 Cursor。
 
 先检查当前 `code` 指向谁：
 
@@ -75,9 +129,9 @@ code --version
 - 上面路径是你电脑当前的实际路径（`D:` 盘对应 WSL 的 `/mnt/d`）。
 - 如果你未来把 VS Code 装到 `C:` 盘，常见路径是：`/mnt/c/Program Files/Microsoft VS Code/bin/code`
 
-## 1.2 创建 4 个 worktree（如果你还没创建过）
+## 1.2 创建 P0 worktree（如果你还没创建过）
 
-只有在你没有 `/mnt/d/cce-wt-docs` 这些目录时才需要执行本段；如果已经存在，直接跳到「2. 打开 4 个 VS Code 窗口」。
+只有在你没有 `/mnt/d/cce-wt-pm` 这些目录时才需要执行本段；如果已经存在，直接跳到「2. 打开 VS Code 窗口」。
 
 ```bash
 cd /mnt/d/codex-chat-exporter-main
@@ -86,11 +140,12 @@ cd /mnt/d/codex-chat-exporter-main
 git checkout main
 git pull --rebase origin main
 
-# 创建 4 个 worktree（每个 worktree 自动绑定一个新分支）
-git worktree add /mnt/d/cce-wt-docs -b chore/ai-learning-os-docs main
-git worktree add /mnt/d/cce-wt-extension -b feat/vscode-sync-to-bridge main
-git worktree add /mnt/d/cce-wt-bridge -b feat/bridge-service-mvp main
-git worktree add /mnt/d/cce-wt-open-notebook -b feat/open-notebook-sync main
+# 创建 5 个 worktree（每个 worktree 自动绑定一个新分支）
+git worktree add /mnt/d/cce-wt-pm -b chore/pm-and-spec main
+git worktree add /mnt/d/cce-wt-export -b feat/export-center-api main
+git worktree add /mnt/d/cce-wt-replay -b feat/replay-stub main
+git worktree add /mnt/d/cce-wt-import -b feat/harden-bridge-import main
+git worktree add /mnt/d/cce-wt-privacy -b feat/expand-privacy-redaction main
 
 git worktree list
 ```
@@ -99,22 +154,24 @@ git worktree list
 
 ```bash
 cd /mnt/d/codex-chat-exporter-main
-git worktree add /mnt/d/cce-wt-docs chore/ai-learning-os-docs
-git worktree add /mnt/d/cce-wt-extension feat/vscode-sync-to-bridge
-git worktree add /mnt/d/cce-wt-bridge feat/bridge-service-mvp
-git worktree add /mnt/d/cce-wt-open-notebook feat/open-notebook-sync
+git worktree add /mnt/d/cce-wt-pm chore/pm-and-spec
+git worktree add /mnt/d/cce-wt-export feat/export-center-api
+git worktree add /mnt/d/cce-wt-replay feat/replay-stub
+git worktree add /mnt/d/cce-wt-import feat/harden-bridge-import
+git worktree add /mnt/d/cce-wt-privacy feat/expand-privacy-redaction
 git worktree list
 ```
 
-## 2. 打开 4 个 VS Code 窗口（每个窗口一个 worktree）
+## 2. 打开 VS Code 窗口（每个窗口一个 worktree）
 
 在 WSL 终端里依次执行（`-n` 表示每次都开新窗口）：
 
 ```bash
-code -n /mnt/d/cce-wt-docs
-code -n /mnt/d/cce-wt-extension
-code -n /mnt/d/cce-wt-bridge
-code -n /mnt/d/cce-wt-open-notebook
+code -n /mnt/d/cce-wt-pm
+code -n /mnt/d/cce-wt-export
+code -n /mnt/d/cce-wt-replay
+code -n /mnt/d/cce-wt-import
+code -n /mnt/d/cce-wt-privacy
 ```
 
 打开后，每个窗口都用 VS Code 的集成终端（菜单 Terminal → New Terminal，或快捷键 Ctrl+`）执行一次：

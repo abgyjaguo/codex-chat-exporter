@@ -6,9 +6,11 @@
 
 已在仓库内完成：
 - OpenSpec 作为 spec 真相源的骨架：`openspec/project.md`、`openspec/specs/**`
-- P0 相关的两个 OpenSpec change proposals：
+- P0 相关的 OpenSpec change proposals：
   - `openspec/changes/add-export-center-api/`
   - `openspec/changes/add-replay-stub/`
+  - `openspec/changes/harden-bridge-import/`
+  - `openspec/changes/expand-privacy-redaction/`
 - GitHub 协作模板：
   - `.github/pull_request_template.md`
   - `.github/ISSUE_TEMPLATE/feature.md`
@@ -148,10 +150,10 @@ codex -C D:\cce-wt-privacy
 
 - `scripts/create-ai-learning-os-project.mjs`：创建 `AI Learning OS v0.3.4` Project（Projects v2），并按 `docs/ai-learning-os/BACKLOG.md` 的 **P0** 清单创建 Issues、加入 Project、填写字段（`Module/Priority/Milestone/OpenSpec Change`）。
 
-PowerShell 示例：
+PowerShell 示例（推荐复用你在 Codex/MCP 用的同一个 PAT）：
 
 ```powershell
-$env:GITHUB_TOKEN = "YOUR_TOKEN"
+$env:GITHUB_PAT_TOKEN = "YOUR_TOKEN"
 node scripts/create-ai-learning-os-project.mjs --repo abgyjaguo/codex-chat-exporter
 ```
 
