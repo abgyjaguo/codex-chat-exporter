@@ -20,7 +20,7 @@ function renderSourceMarkdown({ project, session, project_id, session_id, messag
 
   for (let i = 0; i < messages.length; i += 1) {
     const m = messages[i] || {};
-    const anchor = anchorForIndex(i);
+    const anchor = m.message_id || anchorForIndex(i);
     const role = m.role || "unknown";
     const ts = m.timestamp ? ` (${m.timestamp})` : "";
     lines.push(`<a id="${anchor}"></a>`);
@@ -37,10 +37,9 @@ function relativeLinkToSourceAnchor(sourceId, anchor) {
 }
 
 function renderPlaceholderNotes({ project, session, project_id, session_id, sourceId, messages }) {
-  const anchors = [];
-  if (messages.length >= 1) anchors.push(anchorForIndex(0));
-  if (messages.length >= 2) anchors.push(anchorForIndex(1));
-  if (messages.length >= 3) anchors.push(anchorForIndex(2));
+  const anchors = messages
+    .slice(0, 3)
+    .map((m, i) => (m && typeof m === "object" && m.message_id ? m.message_id : anchorForIndex(i)));
 
   const evidenceLines = anchors.length
     ? anchors.map((a) => `- [${a}](${relativeLinkToSourceAnchor(sourceId, a)})`)

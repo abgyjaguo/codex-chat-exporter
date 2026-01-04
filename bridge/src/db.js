@@ -64,6 +64,7 @@ function makeBridgeDb(db, driver) {
     session_id,
     exported_at,
     raw_jsonl,
+    raw_markdown,
     normalized_json,
     warnings_json,
     message_count,
@@ -74,6 +75,7 @@ function makeBridgeDb(db, driver) {
       session_id,
       exported_at,
       raw_jsonl,
+      raw_markdown,
       normalized_json,
       warnings_json,
       message_count,
@@ -126,10 +128,10 @@ function prepareStatements(db) {
     ),
     insertSource: db.prepare(
       `INSERT INTO sources (
-         id, session_id, exported_at, raw_jsonl, normalized_json, warnings_json, message_count, created_at
+         id, session_id, exported_at, raw_jsonl, raw_markdown, normalized_json, warnings_json, message_count, created_at
        )
        VALUES (
-         @id, @session_id, @exported_at, @raw_jsonl, @normalized_json, @warnings_json, @message_count, @created_at
+         @id, @session_id, @exported_at, @raw_jsonl, @raw_markdown, @normalized_json, @warnings_json, @message_count, @created_at
        )`,
     ),
     getProjectById: db.prepare(
@@ -143,7 +145,7 @@ function prepareStatements(db) {
        WHERE id = @id`,
     ),
     getLatestSourceBySessionId: db.prepare(
-      `SELECT id, session_id, exported_at, raw_jsonl, normalized_json, warnings_json, message_count, created_at
+      `SELECT id, session_id, exported_at, raw_jsonl, raw_markdown, normalized_json, warnings_json, message_count, created_at
        FROM sources
        WHERE session_id = @session_id
        ORDER BY created_at DESC
@@ -195,6 +197,7 @@ function migrate(db) {
       session_id TEXT NOT NULL,
       exported_at TEXT,
       raw_jsonl TEXT NOT NULL,
+      raw_markdown TEXT,
       normalized_json TEXT NOT NULL,
       warnings_json TEXT NOT NULL,
       message_count INTEGER NOT NULL,
@@ -206,6 +209,10 @@ function migrate(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS sessions_project_name_idx ON sessions(project_id, name);
     CREATE INDEX IF NOT EXISTS sources_session_idx ON sources(session_id);
   `);
+
+  try {
+    db.exec("ALTER TABLE sources ADD COLUMN raw_markdown TEXT;");
+  } catch {}
 }
 
 function tryRequire(specifier) {
