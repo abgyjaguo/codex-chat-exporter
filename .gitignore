@@ -3,4 +3,4 @@
 *.vsix
 rollout-*.md
 rollout-*.jsonl
-
+.local-backups/
