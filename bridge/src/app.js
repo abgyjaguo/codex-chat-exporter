@@ -8,6 +8,8 @@ const { parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
 const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
 const { renderSourceMarkdown, renderPlaceholderNotes } = require("./lib/openNotebookContent");
+const { getBridgePublicBaseUrl } = require("./lib/replayUrls");
+const { renderReplayErrorHtml, renderReplayIndexHtml, renderReplaySessionHtml } = require("./lib/replayHtml");
 const {
   normalizeExportVersion,
   normalizeIncludes,
@@ -43,6 +45,72 @@ function createBridgeApp(options = {}) {
   const bridgeDb = openBridgeDb(dbPath);
 
   app.use(express.json({ limit: bodyLimit }));
+
+  app.get("/replay", (req, res) => {
+    let limit = 50;
+    const limitRaw = typeof req.query.limit === "string" ? req.query.limit.trim() : "";
+    if (limitRaw) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(200, Math.floor(parsed));
+    }
+
+    let sessions = [];
+    try {
+      sessions = bridgeDb.listRecentSessions({ limit });
+    } catch (err) {
+      res
+        .status(500)
+        .type("text/html")
+        .send(
+          renderReplayErrorHtml({
+            title: "Replay",
+            message: err instanceof Error ? err.message : "Failed to list sessions.",
+          }),
+        );
+      return;
+    }
+
+    res.status(200).type("text/html").send(renderReplayIndexHtml({ sessions }));
+  });
+
+  app.get("/replay/projects/:project_id/sessions/:session_id", (req, res) => {
+    const projectId = String(req.params.project_id || "");
+    const sessionId = String(req.params.session_id || "");
+
+    const projectRow = bridgeDb.getProjectById(projectId);
+    if (!projectRow) {
+      res.status(404).type("text/html").send(renderReplayErrorHtml({ title: "Replay", message: "Project not found." }));
+      return;
+    }
+
+    const sessionRow = bridgeDb.getSessionById(sessionId);
+    if (!sessionRow || sessionRow.project_id !== projectId) {
+      res.status(404).type("text/html").send(renderReplayErrorHtml({ title: "Replay", message: "Session not found." }));
+      return;
+    }
+
+    const sourceRow = bridgeDb.getLatestSourceBySessionId(sessionId);
+    if (!sourceRow) {
+      res
+        .status(404)
+        .type("text/html")
+        .send(renderReplayErrorHtml({ title: "Replay", message: "No imported source found for this session." }));
+      return;
+    }
+
+    const messages = safeJsonParseArray(sourceRow.normalized_json);
+    if (messages == null) {
+      res.status(500).type("text/html").send(
+        renderReplayErrorHtml({
+          title: "Replay",
+          message: "Failed to parse normalized session messages.",
+        }),
+      );
+      return;
+    }
+
+    res.status(200).type("text/html").send(renderReplaySessionHtml({ project: projectRow, session: sessionRow, messages }));
+  });
 
   app.get("/bridge/v1/health", (req, res) => {
     res.type("text/plain").send("ok");
@@ -206,7 +274,7 @@ function createBridgeApp(options = {}) {
       practices: includes.practices ? 0 : 0,
     };
 
-    const replayBaseUrl = (process.env.BRIDGE_PUBLIC_BASE_URL || "").trim() || `${req.protocol}://${req.get("host")}`;
+    const replayBaseUrl = getBridgePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
     const manifest = makeExportManifest({
       version,
       export_id,
@@ -226,6 +294,7 @@ function createBridgeApp(options = {}) {
       project_id: projectId,
       session_id: sessionId,
       messages,
+      replayBaseUrl,
     });
 
     const index_markdown = renderExportIndexMarkdown({
@@ -429,6 +498,7 @@ function createBridgeApp(options = {}) {
       });
     }
 
+    const replayBaseUrl = getBridgePublicBaseUrl();
     const adapter = FilesystemAdapter.fromEnv(OPEN_NOTEBOOK_FS_ROOT_ENV);
 
     const notebookProjectKey = projectRow.cwd;
@@ -447,6 +517,7 @@ function createBridgeApp(options = {}) {
             project_id: projectId,
             session_id: sessionId,
             messages,
+            replayBaseUrl,
           });
           sourceId = await adapter.upsertSource(notebookId, sessionId, sourceMarkdown);
         }
@@ -468,6 +539,7 @@ function createBridgeApp(options = {}) {
             session_id: sessionId,
             sourceId,
             messages,
+            replayBaseUrl,
           });
 
           noteKinds.push("summary", "study-pack", "milestones");

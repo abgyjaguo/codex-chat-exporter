@@ -136,6 +136,10 @@ function makeBridgeDb(db, driver) {
     return statements.listExports.all({ limit: lim }) || [];
   }
 
+  function listRecentSessions({ limit }) {
+    return statements.listRecentSessions.all({ limit }) || [];
+  }
+
   return {
     db,
     driver,
@@ -150,6 +154,7 @@ function makeBridgeDb(db, driver) {
     updateExport,
     getExportById,
     listExports,
+    listRecentSessions,
     close: () => {
       if (typeof db.close === "function") db.close();
     },
@@ -222,6 +227,19 @@ function prepareStatements(db) {
       `SELECT id, project_id, session_id, scope_json, includes_json, status, created_at, version, zip_path, counts_json, warnings_json, error_json
        FROM exports
        ORDER BY created_at DESC
+       LIMIT @limit`,
+    ),
+    listRecentSessions: db.prepare(
+      `SELECT
+         s.id AS session_id,
+         s.project_id AS project_id,
+         s.name AS session_name,
+         s.imported_at AS imported_at,
+         p.name AS project_name,
+         p.cwd AS project_cwd
+       FROM sessions s
+       JOIN projects p ON p.id = s.project_id
+       ORDER BY s.imported_at DESC
        LIMIT @limit`,
     ),
   };
