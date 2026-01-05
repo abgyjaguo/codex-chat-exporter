@@ -3,6 +3,7 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const { OpenNotebookAdapter } = require("./adapter");
+const { redactForOpenNotebookMarkdown } = require("../lib/redact");
 
 const DEFAULT_ENV_VAR = "OPEN_NOTEBOOK_FS_ROOT";
 
@@ -198,6 +199,8 @@ class FilesystemAdapter extends OpenNotebookAdapter {
     assertNonEmpty(session, "session");
     assertNonEmpty(content, "content");
 
+    const sanitizedContent = redactForOpenNotebookMarkdown(content);
+
     const notebookDir = path.join(this.notebooksDir, notebookId);
     await assertDirectoryExists(notebookDir, "Notebook directory");
 
@@ -212,7 +215,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
       session,
     });
     try {
-      await fs.writeFile(sourcePath, `${frontMatter}${content}\n`, "utf8");
+      await fs.writeFile(sourcePath, `${frontMatter}${sanitizedContent}\n`, "utf8");
     } catch (error) {
       throw new Error(
         formatFsError(error, {
@@ -234,6 +237,8 @@ class FilesystemAdapter extends OpenNotebookAdapter {
       throw new Error("links must be an array of strings.");
     }
 
+    const sanitizedContent = redactForOpenNotebookMarkdown(content);
+
     const notebookDir = path.join(this.notebooksDir, notebookId);
     await assertDirectoryExists(notebookDir, "Notebook directory");
 
@@ -245,7 +250,7 @@ class FilesystemAdapter extends OpenNotebookAdapter {
       links,
     });
     try {
-      await fs.writeFile(notePath, `${frontMatter}${content}\n`, "utf8");
+      await fs.writeFile(notePath, `${frontMatter}${sanitizedContent}\n`, "utf8");
     } catch (error) {
       throw new Error(
         formatFsError(error, {
