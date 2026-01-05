@@ -21,3 +21,11 @@ Replay SHALL expose stable anchors for messages as `#m-000001` (or equivalent st
 - **WHEN** a user opens a Replay URL with `#m-000123`
 - **THEN** the UI scrolls to and highlights that message
 
+### Requirement: Open in Replay deep links
+The system SHALL support generating absolute `Open in Replay` links for downstream artifacts when a public base URL is configured.
+
+#### Scenario: Published evidence includes absolute replay URL
+- **WHEN** `BRIDGE_PUBLIC_BASE_URL` is configured
+- **AND** an artifact renders evidence links for a given `(project_id, session_id, message_id)`
+- **THEN** the evidence includes an `Open in Replay` URL like `{BRIDGE_PUBLIC_BASE_URL}/replay/projects/{project_id}/sessions/{session_id}#m-000123`
+
