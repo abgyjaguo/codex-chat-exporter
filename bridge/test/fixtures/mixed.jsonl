@@ -1,0 +1,6 @@
+{"type":"event_msg","timestamp":"2025-12-26T00:00:00.000Z","payload":{"type":"user_message","message":"hi"}}
+{"type":"event_msg","timestamp":"2025-12-26T00:00:01.000Z","payload":{"type":"agent_message","message":"hello"}}
+{"type":"response_item","timestamp":"2025-12-26T00:00:02.000Z","payload":{"type":"function_call_output","call_id":"call_1","output":"tool out"}}
+{"type":"event_msg","timestamp":"2025-12-26T00:00:03.000Z","payload":{"type":"user_message","message":"<environment_context>\nSECRET=sk-test\n</environment_context>"}}
+{"type":"response_item","timestamp":"2025-12-26T00:00:04.000Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"duplicate user via response_item"}]}}
+{"type":"response_item","timestamp":"2025-12-26T00:00:05.000Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"duplicate assistant via response_item"}]}}

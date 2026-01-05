@@ -4,10 +4,10 @@ const express = require("express");
 
 const { openBridgeDb } = require("./db");
 const { stableId, randomId } = require("./lib/ids");
-const { parseCodexJsonl } = require("./lib/codexJsonl");
+const { filterCodexJsonlRaw, parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
 const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
-const { renderSourceMarkdown, renderPlaceholderNotes } = require("./lib/openNotebookContent");
+const { anchorForIndex, renderSourceMarkdown, renderPlaceholderNotes } = require("./lib/openNotebookContent");
 const { getBridgePublicBaseUrl } = require("./lib/replayUrls");
 const { renderReplayErrorHtml, renderReplayIndexHtml, renderReplaySessionHtml } = require("./lib/replayHtml");
 const {
@@ -31,19 +31,68 @@ function safeJsonParseArray(text) {
   }
 }
 
-function createBridgeApp(options = {}) {
-  const bodyLimit = options.bodyLimit || process.env.BRIDGE_BODY_LIMIT || "25mb";
-  const dbPath =
-    options.dbPath || process.env.BRIDGE_DB_PATH || path.join(__dirname, "..", ".data", "bridge.db");
+function stripMarkdownH3Sections(markdownText, headingPrefixes) {
+  const prefixes = Array.isArray(headingPrefixes) ? headingPrefixes : [];
+  if (prefixes.length === 0) return String(markdownText ?? "");
 
+  const lines = String(markdownText ?? "").split(/\r?\n/);
+  const out = [];
+  let skipping = false;
+
+  const shouldStripHeading = (line) => prefixes.some((p) => String(line || "").startsWith(p));
+
+  for (const line of lines) {
+    if (!skipping) {
+      if (shouldStripHeading(line)) {
+        skipping = true;
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+
+    if (/^#{1,3}\s/.test(line)) {
+      skipping = false;
+      if (shouldStripHeading(line)) {
+        skipping = true;
+        continue;
+      }
+      out.push(line);
+      continue;
+    }
+  }
+
+  return out.join("\n");
+}
+
+function sanitizeCodexMarkdown(markdownText, options = {}) {
+  const includeToolOutputs = !!options.includeToolOutputs;
+  const includeEnvironmentContext = !!options.includeEnvironmentContext;
+
+  let out = String(markdownText ?? "");
+
+  if (!includeEnvironmentContext) {
+    out = out.replace(/<environment_context>[\s\S]*?(?:<\/environment_context>|$)/g, "");
+  }
+
+  if (!includeToolOutputs) {
+    out = stripMarkdownH3Sections(out, ["### 工具输出", "### Tool output", "### Tool outputs"]);
+  }
+
+  return out;
+}
+
+function createApp(options = {}) {
+  const bodyLimit = options.bodyLimit || process.env.BRIDGE_BODY_LIMIT || "25mb";
   const exportsDir =
-    options.exportsDir ||
-    process.env.BRIDGE_EXPORTS_DIR ||
-    path.join(path.dirname(dbPath), "exports");
+    options.exportsDir || process.env.BRIDGE_EXPORTS_DIR || path.join(__dirname, "..", ".data", "exports");
+
+  const bridgeDb = options.bridgeDb;
+  if (!bridgeDb) {
+    throw new Error("createApp requires bridgeDb");
+  }
 
   const app = express();
-  const bridgeDb = openBridgeDb(dbPath);
-
   app.use(express.json({ limit: bodyLimit }));
 
   app.get("/replay", (req, res) => {
@@ -134,18 +183,40 @@ function createBridgeApp(options = {}) {
     const projectName = project && typeof project.name === "string" ? project.name.trim() : "";
     const projectCwd = project && typeof project.cwd === "string" ? project.cwd.trim() : "";
     const sessionName = session && typeof session.name === "string" ? session.name.trim() : "";
+    const sessionSourceType = session && typeof session.source === "string" ? session.source.trim() : "";
     const exportedAt = typeof body.exported_at === "string" ? body.exported_at.trim() : "";
+
     const jsonlText = codex && typeof codex.jsonl_text === "string" ? codex.jsonl_text : "";
+    const markdownText = codex && typeof codex.markdown_text === "string" ? codex.markdown_text : "";
+
+    const hasJsonl = typeof jsonlText === "string" && jsonlText.trim() !== "";
+    const hasMarkdown = typeof markdownText === "string" && markdownText.trim() !== "";
 
     if (!projectName) errors.push("project.name must be a non-empty string");
     if (!projectCwd) errors.push("project.cwd must be a non-empty string");
     if (!sessionName) errors.push("session.name must be a non-empty string");
     if (!exportedAt) errors.push("exported_at must be a non-empty string (ISO-8601 recommended)");
-    if (!jsonlText) errors.push("codex.jsonl_text must be a non-empty string");
+    if (!hasJsonl && !hasMarkdown) {
+      errors.push("codex must include at least one non-empty string: jsonl_text or markdown_text");
+    }
+
+    if (codex && Object.prototype.hasOwnProperty.call(codex, "include_tool_outputs")) {
+      if (typeof codex.include_tool_outputs !== "boolean") {
+        errors.push("codex.include_tool_outputs must be a boolean");
+      }
+    }
+    if (codex && Object.prototype.hasOwnProperty.call(codex, "include_environment_context")) {
+      if (typeof codex.include_environment_context !== "boolean") {
+        errors.push("codex.include_environment_context must be a boolean");
+      }
+    }
 
     if (errors.length > 0) {
       return sendError(res, 400, "invalid_request", "Invalid import payload", { errors });
     }
+
+    const includeToolOutputs = codex.include_tool_outputs === true;
+    const includeEnvironmentContext = codex.include_environment_context === true;
 
     const warnings = [];
     const parsedExportedAtMs = Date.parse(exportedAt);
@@ -156,11 +227,30 @@ function createBridgeApp(options = {}) {
       });
     }
 
-    const { message_count, messages, warnings: parseWarnings } = parseCodexJsonl(jsonlText);
-    for (const w of parseWarnings) warnings.push(w);
+    const raw_jsonl = hasJsonl
+      ? filterCodexJsonlRaw(jsonlText, { includeToolOutputs, includeEnvironmentContext })
+      : "";
+    const raw_markdown = hasMarkdown
+      ? sanitizeCodexMarkdown(markdownText, { includeToolOutputs, includeEnvironmentContext })
+      : null;
+
+    let message_count = 0;
+    let messages = [];
+    if (hasJsonl) {
+      const parsed = parseCodexJsonl(raw_jsonl, {
+        includeToolOutputs,
+        includeEnvironmentContext,
+      });
+      message_count = parsed.message_count;
+      messages = parsed.messages;
+      for (const w of parsed.warnings) warnings.push(w);
+    }
 
     const project_id = stableId("proj", projectCwd);
     const session_id = stableId("sess", project_id, sessionName);
+
+    const derivedSourceType = hasJsonl ? "codex_jsonl" : "codex_markdown";
+    const source_type = sessionSourceType || derivedSourceType;
 
     const now = new Date().toISOString();
     try {
@@ -176,13 +266,14 @@ function createBridgeApp(options = {}) {
           project_id,
           name: sessionName,
           imported_at: now,
-          source_type: "codex_jsonl",
+          source_type,
         });
         bridgeDb.addSource({
           id: randomId("src"),
           session_id,
           exported_at: exportedAt,
-          raw_jsonl: jsonlText,
+          raw_jsonl,
+          raw_markdown,
           normalized_json: JSON.stringify(messages),
           warnings_json: JSON.stringify(warnings),
           message_count,
@@ -498,7 +589,7 @@ function createBridgeApp(options = {}) {
       });
     }
 
-    const replayBaseUrl = getBridgePublicBaseUrl();
+    const replayBaseUrl = getBridgePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
     const adapter = FilesystemAdapter.fromEnv(OPEN_NOTEBOOK_FS_ROOT_ENV);
 
     const notebookProjectKey = projectRow.cwd;
@@ -545,9 +636,9 @@ function createBridgeApp(options = {}) {
           noteKinds.push("summary", "study-pack", "milestones");
 
           const links = [];
-          if (messages.length >= 1) links.push("m-000001");
-          if (messages.length >= 2) links.push("m-000002");
-          if (messages.length >= 3) links.push("m-000003");
+          if (messages.length >= 1) links.push(anchorForIndex(0));
+          if (messages.length >= 2) links.push(anchorForIndex(1));
+          if (messages.length >= 3) links.push(anchorForIndex(2));
 
           for (const kind of noteKinds) {
             const content = notes[kind] || notes[kind.replace(/_/g, "-")] || "";
@@ -595,13 +686,24 @@ function createBridgeApp(options = {}) {
     return sendError(res, 500, "internal_error", "Unexpected server error");
   });
 
-  return {
-    app,
-    bridgeDb,
-    dbPath,
-    exportsDir,
-  };
+  return app;
 }
 
-module.exports = { createBridgeApp };
+function createBridgeApp(options = {}) {
+  const bodyLimit = options.bodyLimit || process.env.BRIDGE_BODY_LIMIT || "25mb";
+  const dbPath =
+    options.dbPath || process.env.BRIDGE_DB_PATH || path.join(__dirname, "..", ".data", "bridge.db");
+
+  const exportsDir =
+    options.exportsDir ||
+    process.env.BRIDGE_EXPORTS_DIR ||
+    path.join(path.dirname(dbPath), "exports");
+
+  const bridgeDb = openBridgeDb(dbPath);
+  const app = createApp({ bridgeDb, bodyLimit, exportsDir });
+
+  return { app, bridgeDb, dbPath, exportsDir };
+}
+
+module.exports = { createApp, createBridgeApp };
 

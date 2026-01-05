@@ -1039,6 +1039,13 @@ async function buildBridgePayload(options) {
     throw new Error("同步内容为空：请至少开启 JSONL 或 Markdown 上传。");
   }
 
+  if (options.includeToolOutputs === true) {
+    codex.include_tool_outputs = true;
+  }
+  if (options.includeEnvironmentContext === true) {
+    codex.include_environment_context = true;
+  }
+
   const project = { name: options.projectName };
   if (options.projectCwd) project.cwd = options.projectCwd;
   if (options.doneDefinition) project.done_definition = options.doneDefinition;
