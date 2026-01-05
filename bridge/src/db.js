@@ -93,6 +93,49 @@ function makeBridgeDb(db, driver) {
     return statements.getLatestSourceBySessionId.get({ session_id }) || null;
   }
 
+  function createExport({
+    id,
+    project_id,
+    session_id,
+    scope_json,
+    includes_json,
+    status,
+    created_at,
+    version,
+    zip_path,
+    counts_json,
+    warnings_json,
+    error_json,
+  }) {
+    statements.insertExport.run({
+      id,
+      project_id,
+      session_id,
+      scope_json,
+      includes_json,
+      status,
+      created_at,
+      version,
+      zip_path,
+      counts_json,
+      warnings_json,
+      error_json,
+    });
+  }
+
+  function updateExport({ id, status, zip_path, counts_json, warnings_json, error_json }) {
+    statements.updateExport.run({ id, status, zip_path, counts_json, warnings_json, error_json });
+  }
+
+  function getExportById(id) {
+    return statements.getExportById.get({ id }) || null;
+  }
+
+  function listExports({ limit = 100 } = {}) {
+    const lim = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.trunc(limit))) : 100;
+    return statements.listExports.all({ limit: lim }) || [];
+  }
+
   return {
     db,
     driver,
@@ -103,6 +146,10 @@ function makeBridgeDb(db, driver) {
     getProjectById,
     getSessionById,
     getLatestSourceBySessionId,
+    createExport,
+    updateExport,
+    getExportById,
+    listExports,
     close: () => {
       if (typeof db.close === "function") db.close();
     },
@@ -148,6 +195,34 @@ function prepareStatements(db) {
        WHERE session_id = @session_id
        ORDER BY created_at DESC
        LIMIT 1`,
+    ),
+    insertExport: db.prepare(
+      `INSERT INTO exports (
+         id, project_id, session_id, scope_json, includes_json, status, created_at, version, zip_path, counts_json, warnings_json, error_json
+       )
+       VALUES (
+         @id, @project_id, @session_id, @scope_json, @includes_json, @status, @created_at, @version, @zip_path, @counts_json, @warnings_json, @error_json
+       )`,
+    ),
+    updateExport: db.prepare(
+      `UPDATE exports
+       SET status = @status,
+           zip_path = @zip_path,
+           counts_json = @counts_json,
+           warnings_json = @warnings_json,
+           error_json = @error_json
+       WHERE id = @id`,
+    ),
+    getExportById: db.prepare(
+      `SELECT id, project_id, session_id, scope_json, includes_json, status, created_at, version, zip_path, counts_json, warnings_json, error_json
+       FROM exports
+       WHERE id = @id`,
+    ),
+    listExports: db.prepare(
+      `SELECT id, project_id, session_id, scope_json, includes_json, status, created_at, version, zip_path, counts_json, warnings_json, error_json
+       FROM exports
+       ORDER BY created_at DESC
+       LIMIT @limit`,
     ),
   };
 }
@@ -205,6 +280,26 @@ function migrate(db) {
     CREATE UNIQUE INDEX IF NOT EXISTS projects_cwd_idx ON projects(cwd);
     CREATE UNIQUE INDEX IF NOT EXISTS sessions_project_name_idx ON sessions(project_id, name);
     CREATE INDEX IF NOT EXISTS sources_session_idx ON sources(session_id);
+
+    CREATE TABLE IF NOT EXISTS exports (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      session_id TEXT,
+      scope_json TEXT NOT NULL,
+      includes_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      version TEXT NOT NULL,
+      zip_path TEXT,
+      counts_json TEXT NOT NULL,
+      warnings_json TEXT NOT NULL,
+      error_json TEXT,
+      FOREIGN KEY(project_id) REFERENCES projects(id),
+      FOREIGN KEY(session_id) REFERENCES sessions(id)
+    );
+
+    CREATE INDEX IF NOT EXISTS exports_project_idx ON exports(project_id);
+    CREATE INDEX IF NOT EXISTS exports_created_at_idx ON exports(created_at);
   `);
 }
 
