@@ -73,13 +73,13 @@ function makeBridgeDb(db, driver) {
     statements.insertSource.run({
       id,
       session_id,
-      exported_at,
-      raw_jsonl,
-      raw_markdown,
-      normalized_json,
-      warnings_json,
-      message_count,
-      created_at,
+      exported_at: typeof exported_at === "string" ? exported_at : "",
+      raw_jsonl: typeof raw_jsonl === "string" ? raw_jsonl : "",
+      raw_markdown: typeof raw_markdown === "string" ? raw_markdown : "",
+      normalized_json: typeof normalized_json === "string" ? normalized_json : "[]",
+      warnings_json: typeof warnings_json === "string" ? warnings_json : "[]",
+      message_count: Number.isFinite(message_count) ? message_count : 0,
+      created_at: typeof created_at === "string" ? created_at : new Date().toISOString(),
     });
   }
 

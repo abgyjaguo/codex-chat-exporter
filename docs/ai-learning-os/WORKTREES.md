@@ -496,6 +496,30 @@ git checkout -b feat/open-notebook-sync origin/main
 
 你在对应窗口打开 Codex 扩展的聊天面板后，把下面对应段落原样发给 Codex。
 
+### 4.0 OpenSpec + GitHub Projects（当前推荐）
+
+> 适用场景：你要 **A/B/C 并行开发**，并且以 `openspec/` 作为唯一 spec 真相源、以 GitHub Projects 作为任务看板。
+
+窗口分工（推荐 4 窗口就够）：
+- PM 窗口（`D:\cce-wt-pm`）：只做 OpenSpec 文档 + GitHub Projects/Issue/PR 管理，不改业务代码
+- Replay 窗口（`D:\cce-wt-replay`）：实现 `update-replay-ui-transcript-viewer`
+- Bridge/OpenNotebook 窗口（`D:\cce-wt-open-notebook` 或 `D:\cce-wt-bridge`）：实现 `add-openai-notes-generator`
+- Extension 窗口（`D:\cce-wt-extension`）：实现 `update-vscode-sync-ux`
+
+把下面提示词分别发到对应窗口的 Codex CLI（或 Codex Chat）：
+
+PM 窗口：
+我在 PM 窗口，只负责 OpenSpec + GitHub Projects 管理：请不要修改 bridge/ 或 extension.js。请以 openspec 为唯一真相源：为每个 change 检查 proposal.md/tasks.md/spec delta 是否完整、能通过 `openspec validate <change> --strict`，并把 Issue/Project 状态维护好。
+
+Replay 窗口：
+我在 Replay 窗口，只修改 bridge/ 里 Replay UI 相关代码。请严格按 OpenSpec change `update-replay-ui-transcript-viewer` 实现 tasks.md 里的事项；不要修改 OpenNotebook/Export/Extension 的逻辑。实现完成后补齐测试并更新 tasks.md 勾选状态。
+
+Bridge/OpenNotebook 窗口：
+我在 Bridge/OpenNotebook 窗口，只修改 bridge/。请严格按 OpenSpec change `add-openai-notes-generator` 实现：新增 notes/generate API（placeholder 默认、openai 显式 opt-in），并更新 OpenNotebook sync 支持发布生成的 notes；注意隐私脱敏。实现完成后补齐测试并更新 tasks.md 勾选状态。
+
+Extension 窗口：
+我在 Extension 窗口，只修改 extension.js、package.json、README.md。请严格按 OpenSpec change `update-vscode-sync-ux` 实现：sync 前 health check，sync 成功后提供 Open Replay/Copy link 等动作；不要修改 bridge/。实现完成后更新 tasks.md 勾选状态。
+
 ### 4.1 文档窗口（`chore/ai-learning-os-docs`）
 我在分支 chore/ai-learning-os-docs，只修改 docs/ai-learning-os/ 和 prd/。请不要修改 extension.js、package.json 或 bridge/ 相关代码。目标是把架构、接口与工作流文档写清楚，作为其他分支的开发契约。
 

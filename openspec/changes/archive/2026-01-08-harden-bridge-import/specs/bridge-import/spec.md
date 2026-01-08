@@ -39,6 +39,8 @@ Bridge SHALL normalize imported JSONL into a JSON array of messages.
 - **THEN** Bridge includes it in normalized messages as `role:"system"`
 - **AND** the environment context block is stored in `text`
 
+## ADDED Requirements
+
 ### Requirement: Privacy-safe defaults
 Bridge SHALL treat tool outputs and `<environment_context>` as sensitive content.
 
