@@ -23,22 +23,36 @@ Service listens on `127.0.0.1:7331` by default.
 - `BRIDGE_EXPORTS_DIR` (default: `<dirname(BRIDGE_DB_PATH)>/exports`)
 - `BRIDGE_PUBLIC_BASE_URL` (optional, e.g. `http://127.0.0.1:7331`)
   - Used to generate **absolute** `Open in Replay` links for exported/published Markdown.
+- OpenAI (optional, for notes generation)
+  - `OPENAI_API_KEY` (required when `provider: "openai"` or `notes_provider: "openai"` is used)
+  - `OPENAI_MODEL` (optional, default: `gpt-4o-mini`)
+  - `OPENAI_BASE_URL` (optional, default: `https://api.openai.com/v1`)
+  - `OPENAI_TIMEOUT_MS` (optional, default: `60000`)
+  - `OPENAI_TEMPERATURE` (optional, default: `0.2`)
+  - `BRIDGE_OPENAI_MAX_MESSAGES` (optional, default: `80`)
+  - `BRIDGE_OPENAI_MAX_CHARS` (optional, default: `20000`)
 
 ### Specs (source of truth)
-- OpenSpec changes:
-  - `openspec/changes/add-export-center-api/specs/bridge-export-center/spec.md`
-  - `openspec/changes/add-replay-stub/specs/replay-ui/spec.md`
+- OpenSpec specs:
+  - `openspec/specs/bridge-import/spec.md`
+  - `openspec/specs/bridge-export-center/spec.md`
+  - `openspec/specs/replay-ui/spec.md`
+  - `openspec/specs/bridge-open-notebook-sync/spec.md`
+  - `openspec/specs/privacy-redaction/spec.md`
 
 ## Endpoints
-- `GET /replay` -> Replay index (stub UI)
-- `GET /replay/projects/{project_id}/sessions/{session_id}` -> Replay session transcript (stub UI; anchors like `#m-000123`)
+- `GET /replay` -> Replay index
+- `GET /replay/projects/{project_id}/sessions/{session_id}` -> Replay session transcript (anchors like `#m-000123`)
+  - Query params: `q` (search), `role` (repeatable role filter)
 - `GET /bridge/v1/health` -> `ok`
 - `POST /bridge/v1/import/codex-chat`
 - `POST /bridge/v1/exports`
 - `GET /bridge/v1/exports`
 - `GET /bridge/v1/exports/{export_id}/download`
 - `POST /bridge/v1/projects/{project_id}/generate` -> `501 Not Implemented` (MVP)
-- `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> Sync Sources + placeholder Notes into OpenNotebook FS adapter
+- `POST /bridge/v1/projects/{project_id}/sessions/{session_id}/notes/generate` -> Generate notes (placeholder by default; OpenAI opt-in)
+- `POST /bridge/v1/projects/{project_id}/sync/open-notebook` -> Sync Sources + Notes into OpenNotebook FS adapter
+  - Set `notes_provider: "openai"` to publish OpenAI-generated notes (requires `OPENAI_API_KEY`).
   - If `BRIDGE_PUBLIC_BASE_URL` is set, Notes include `Open in Replay` deep links like `{BRIDGE_PUBLIC_BASE_URL}/replay/projects/{project_id}/sessions/{session_id}#m-000123`.
 
 ## Troubleshooting
@@ -72,4 +86,31 @@ Create export ZIP (session scope):
 curl -sS -X POST http://127.0.0.1:7331/bridge/v1/exports \\
   -H 'content-type: application/json' \\
   -d '{"scope":{"project_id":"proj_...","session_id":"sess_..."},"includes":{"sessions":true},"version":"v0.3.4"}'
+```
+
+Generate notes (placeholder):
+
+```bash
+curl -sS -X POST http://127.0.0.1:7331/bridge/v1/projects/proj_.../sessions/sess_.../notes/generate \\
+  -H 'content-type: application/json' \\
+  -d '{"provider":"placeholder"}'
+```
+
+Generate notes (OpenAI):
+
+```bash
+export OPENAI_API_KEY="sk-..."
+curl -sS -X POST http://127.0.0.1:7331/bridge/v1/projects/proj_.../sessions/sess_.../notes/generate \\
+  -H 'content-type: application/json' \\
+  -d '{"provider":"openai"}'
+```
+
+Sync OpenNotebook (filesystem adapter, OpenAI notes):
+
+```bash
+export OPEN_NOTEBOOK_FS_ROOT="/tmp/open-notebook-fs"
+export OPENAI_API_KEY="sk-..."
+curl -sS -X POST http://127.0.0.1:7331/bridge/v1/projects/proj_.../sync/open-notebook \\
+  -H 'content-type: application/json' \\
+  -d '{"session_id":"sess_...","targets":["sources","notes"],"notes_provider":"openai"}'
 ```
