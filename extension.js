@@ -83,6 +83,20 @@ async function exportChatCommand(options = {}) {
   const includeToolOutputs = config.get("includeToolOutputs", false);
   const includeEnvironmentContext = config.get("includeEnvironmentContext", false);
 
+  // Fail fast: check Bridge health before continuing.
+  try {
+    const healthUrl = new URL("/bridge/v1/health", bridgeBaseUrl);
+    const health = await getText(healthUrl);
+    if (String(health || "").trim() !== "ok") {
+      throw new Error(`unexpected health response: ${String(health || "").trim()}`);
+    }
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Sync aborted: Bridge is not reachable or unhealthy (${bridgeBaseUrl}).\n\n${stringifyError(err)}`,
+    );
+    return;
+  }
+
   const sessions = await discoverSessionFiles(existingCodexDirs);
   if (sessions.length === 0) {
     void vscode.window.showWarningMessage(
@@ -188,6 +202,8 @@ async function exportChatCommand(options = {}) {
   const outDir = folderUris[0].fsPath;
 
   const results = { ok: 0, failed: 0 };
+  const isSingleSync = sessionPlans.length === 1;
+  let lastSuccess = null;
   for (const s of picked) {
     const outPath = path.join(outDir, defaultExportFileName(s, exportType.value));
     try {
@@ -375,9 +391,45 @@ async function syncToBridgeCommand(options = {}) {
             projectId || sessionId
               ? `（project_id=${projectId || "-"}，session_id=${sessionId || "-"}）`
               : "";
-          void vscode.window.showInformationMessage(
+          if (false) {
+            void vscode.window.showInformationMessage(
             `同步成功：${plan.sessionName}${suffix}`,
           );
+          }
+
+          if (projectId && sessionId) {
+            lastSuccess = { projectId, sessionId, sessionName: plan.sessionName };
+          }
+
+          if (!isSingleSync) continue;
+
+          let replayUrl = "";
+          if (projectId && sessionId) {
+            try {
+              replayUrl = new URL(`/replay/projects/${projectId}/sessions/${sessionId}`, bridgeBaseUrl).toString();
+            } catch {}
+          }
+
+          const actions = replayUrl ? ["Open Replay", "Copy Replay link"] : [];
+          const picked = await vscode.window.showInformationMessage(
+            `Sync succeeded: ${plan.sessionName}${suffix}`,
+            ...actions,
+          );
+
+          if (picked === "Open Replay" && replayUrl) {
+            try {
+              await vscode.env.openExternal(vscode.Uri.parse(replayUrl));
+            } catch (err) {
+              void vscode.window.showErrorMessage(`Failed to open Replay: ${stringifyError(err)}`);
+            }
+          } else if (picked === "Copy Replay link" && replayUrl) {
+            try {
+              await vscode.env.clipboard.writeText(replayUrl);
+            } catch (err) {
+              void vscode.window.showErrorMessage(`Failed to copy Replay link: ${stringifyError(err)}`);
+            }
+          }
+
         } catch (err) {
           results.failed += 1;
           const message = formatBridgeError(err, bridgeBaseUrl, plan.sessionName);
@@ -390,6 +442,39 @@ async function syncToBridgeCommand(options = {}) {
   if (results.ok === 0 && results.failed === 0) return;
 
   const summary = `同步完成：成功 ${results.ok}，失败 ${results.failed}`;
+  if (isSingleSync && results.ok === 1 && results.failed === 0) return;
+
+  if (!isSingleSync && lastSuccess && lastSuccess.projectId && lastSuccess.sessionId) {
+    let replayUrl = "";
+    try {
+      replayUrl = new URL(
+        `/replay/projects/${lastSuccess.projectId}/sessions/${lastSuccess.sessionId}`,
+        bridgeBaseUrl,
+      ).toString();
+    } catch {}
+
+    const actions = replayUrl ? ["Open Replay", "Copy Replay link"] : [];
+    const picked = await vscode.window.showInformationMessage(
+      `${summary} (last ok: ${lastSuccess.sessionName})`,
+      ...actions,
+    );
+
+    if (picked === "Open Replay" && replayUrl) {
+      try {
+        await vscode.env.openExternal(vscode.Uri.parse(replayUrl));
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Failed to open Replay: ${stringifyError(err)}`);
+      }
+    } else if (picked === "Copy Replay link" && replayUrl) {
+      try {
+        await vscode.env.clipboard.writeText(replayUrl);
+      } catch (err) {
+        void vscode.window.showErrorMessage(`Failed to copy Replay link: ${stringifyError(err)}`);
+      }
+    }
+    return;
+  }
+
   void vscode.window.showInformationMessage(summary);
 }
 
@@ -1188,6 +1273,44 @@ async function postJson(url, payload) {
       req.destroy(new Error("请求超时"));
     });
     req.write(data);
+    req.end();
+  });
+}
+
+async function getText(url) {
+  const isHttps = url.protocol === "https:";
+  const client = isHttps ? https : http;
+  const port = url.port ? Number(url.port) : isHttps ? 443 : 80;
+
+  return await new Promise((resolve, reject) => {
+    const req = client.request(
+      {
+        method: "GET",
+        hostname: url.hostname,
+        port,
+        path: url.pathname + url.search,
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          const statusCode = res.statusCode || 0;
+          if (statusCode >= 200 && statusCode < 300) {
+            resolve(body);
+            return;
+          }
+          reject(new Error(`HTTP ${statusCode}: ${String(body || "").trim()}`));
+        });
+      },
+    );
+
+    req.on("error", (err) => reject(err));
+    req.setTimeout(8000, () => {
+      req.destroy(new Error("request timeout"));
+    });
     req.end();
   });
 }
