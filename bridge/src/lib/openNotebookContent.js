@@ -45,23 +45,33 @@ function relativeLinkToSourceAnchor(sourceId, anchor) {
   return `${sourceRel}#${anchor}`;
 }
 
+function renderEvidenceLinks({ sourceId, anchors, project_id, session_id, replayBaseUrl = null }) {
+  const safeAnchors = Array.isArray(anchors) ? anchors.filter(Boolean) : [];
+
+  if (safeAnchors.length === 0) return ["- (no messages)"];
+
+  return safeAnchors.map((a) => {
+    const replayLink = replayBaseUrl
+      ? replayMessageUrl({ projectId: project_id, sessionId: session_id, messageId: a, baseUrl: replayBaseUrl })
+      : null;
+
+    if (sourceId) {
+      const sourceLink = relativeLinkToSourceAnchor(sourceId, a);
+      return replayLink
+        ? `- [${a}](${sourceLink}) · [Open in Replay](${replayLink})`
+        : `- [${a}](${sourceLink}) · _(set \`BRIDGE_PUBLIC_BASE_URL\` for Open in Replay)_`;
+    }
+
+    return replayLink ? `- ${a} · [Open in Replay](${replayLink})` : `- ${a}`;
+  });
+}
+
 function renderPlaceholderNotes({ project, session, project_id, session_id, sourceId, messages, replayBaseUrl = null }) {
   const anchors = messages
     .slice(0, 3)
     .map((m, i) => (m && typeof m === "object" && m.message_id ? m.message_id : anchorForIndex(i)));
 
-  const evidenceLines = anchors.length
-    ? anchors.map((a) => {
-        const sourceLink = relativeLinkToSourceAnchor(sourceId, a);
-        const replayLink = replayBaseUrl
-          ? replayMessageUrl({ projectId: project_id, sessionId: session_id, messageId: a, baseUrl: replayBaseUrl })
-          : null;
-
-        return replayLink
-          ? `- [${a}](${sourceLink}) · [Open in Replay](${replayLink})`
-          : `- [${a}](${sourceLink}) · _(set \`BRIDGE_PUBLIC_BASE_URL\` for Open in Replay)_`;
-      })
-    : ["- (no messages)"];
+  const evidenceLines = renderEvidenceLinks({ sourceId, anchors, project_id, session_id, replayBaseUrl });
 
   const summary = [
     "# Summary",
@@ -110,5 +120,6 @@ function renderPlaceholderNotes({ project, session, project_id, session_id, sour
 module.exports = {
   anchorForIndex,
   renderSourceMarkdown,
+  renderEvidenceLinks,
   renderPlaceholderNotes,
 };

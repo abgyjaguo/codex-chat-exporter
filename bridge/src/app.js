@@ -7,7 +7,8 @@ const { stableId, randomId } = require("./lib/ids");
 const { filterCodexJsonlRaw, parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
 const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
-const { anchorForIndex, renderSourceMarkdown, renderPlaceholderNotes } = require("./lib/openNotebookContent");
+const { anchorForIndex, renderSourceMarkdown } = require("./lib/openNotebookContent");
+const { generateNotes } = require("./lib/notesGenerator");
 const { getBridgePublicBaseUrl } = require("./lib/replayUrls");
 const { renderReplayErrorHtml, renderReplayIndexHtml, renderReplaySessionHtml } = require("./lib/replayHtml");
 const {
@@ -525,6 +526,80 @@ function createApp(options = {}) {
     });
   });
 
+  app.post("/bridge/v1/projects/:project_id/sessions/:session_id/notes/generate", async (req, res) => {
+    const projectId = String(req.params.project_id || "");
+    const sessionId = String(req.params.session_id || "");
+
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      return sendError(res, 400, "invalid_request", "Request body must be JSON");
+    }
+
+    const provider = typeof body.provider === "string" ? body.provider.trim() : "";
+    const noteKinds = Array.isArray(body.kinds) ? body.kinds : null;
+    const includeToolMessages = !!body.include_tool_messages;
+    const includeSystemMessages = !!body.include_system_messages;
+
+    const projectRow = bridgeDb.getProjectById(projectId);
+    if (!projectRow) {
+      return sendError(res, 404, "not_found", "Project not found", { project_id: projectId });
+    }
+
+    const sessionRow = bridgeDb.getSessionById(sessionId);
+    if (!sessionRow || sessionRow.project_id !== projectId) {
+      return sendError(res, 404, "not_found", "Session not found", { project_id: projectId, session_id: sessionId });
+    }
+
+    const sourceRow = bridgeDb.getLatestSourceBySessionId(sessionId);
+    if (!sourceRow) {
+      return sendError(res, 404, "not_found", "No imported source found for session", { session_id: sessionId });
+    }
+
+    const messages = safeJsonParseArray(sourceRow.normalized_json);
+    if (messages == null) {
+      return sendError(res, 500, "invalid_state", "Failed to parse normalized_json for session source", {
+        session_id: sessionId,
+      });
+    }
+
+    const replayBaseUrl = getBridgePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
+    const project = { id: projectRow.id, name: projectRow.name, cwd: projectRow.cwd };
+    const session = { id: sessionRow.id, name: sessionRow.name };
+
+    try {
+      const generated = await generateNotes({
+        provider,
+        noteKinds: noteKinds || undefined,
+        project,
+        session,
+        project_id: projectId,
+        session_id: sessionId,
+        sourceId: null,
+        messages,
+        replayBaseUrl,
+        generationOptions: { includeToolMessages, includeSystemMessages },
+      });
+
+      return res.json({
+        provider: generated.provider,
+        project_id: projectId,
+        session_id: sessionId,
+        notes: generated.notes,
+      });
+    } catch (err) {
+      if (err && err.code === "missing_openai_key") {
+        return sendError(res, 400, "invalid_config", "OpenAI is not configured (missing OPENAI_API_KEY)", {
+          missing: ["OPENAI_API_KEY"],
+        });
+      }
+      return sendError(res, 500, "notes_generate_failed", "Failed to generate notes", {
+        project_id: projectId,
+        session_id: sessionId,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
+
   app.post("/bridge/v1/projects/:project_id/sync/open-notebook", (req, res) => {
     const projectId = String(req.params.project_id || "");
 
@@ -535,6 +610,7 @@ function createApp(options = {}) {
 
     const sessionId = typeof body.session_id === "string" ? body.session_id.trim() : "";
     const targetsRaw = body.targets;
+    const notesProvider = typeof body.notes_provider === "string" ? body.notes_provider.trim() : "";
 
     if (!sessionId) {
       return sendError(res, 400, "invalid_request", "session_id must be a non-empty string");
@@ -623,16 +699,6 @@ function createApp(options = {}) {
             });
           }
 
-          const notes = renderPlaceholderNotes({
-            project,
-            session,
-            project_id: projectId,
-            session_id: sessionId,
-            sourceId,
-            messages,
-            replayBaseUrl,
-          });
-
           noteKinds.push("summary", "study-pack", "milestones");
 
           const links = [];
@@ -640,8 +706,30 @@ function createApp(options = {}) {
           if (messages.length >= 2) links.push(anchorForIndex(1));
           if (messages.length >= 3) links.push(anchorForIndex(2));
 
+          let generated;
+          try {
+            generated = await generateNotes({
+              provider: notesProvider,
+              noteKinds,
+              project,
+              session,
+              project_id: projectId,
+              session_id: sessionId,
+              sourceId,
+              messages,
+              replayBaseUrl,
+            });
+          } catch (err) {
+            if (err && err.code === "missing_openai_key") {
+              return sendError(res, 400, "invalid_config", "OpenAI is not configured (missing OPENAI_API_KEY)", {
+                missing: ["OPENAI_API_KEY"],
+              });
+            }
+            throw err;
+          }
+
           for (const kind of noteKinds) {
-            const content = notes[kind] || notes[kind.replace(/_/g, "-")] || "";
+            const content = generated.notes[kind] || generated.notes[kind.replace(/_/g, "-")] || "";
             noteIds[kind] = await adapter.upsertNote(notebookId, kind, content, links);
           }
         }
@@ -657,6 +745,7 @@ function createApp(options = {}) {
           session_id: sessionId,
           source_id: sourceId,
           notes: noteIds,
+          notes_provider: wantNotes ? notesProvider || "placeholder" : undefined,
         });
       })
       .catch((err) => {
