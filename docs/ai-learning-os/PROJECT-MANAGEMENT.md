@@ -7,10 +7,15 @@
 已在仓库内完成：
 - OpenSpec 作为 spec 真相源的骨架：`openspec/project.md`、`openspec/specs/**`
 - P0 相关的 OpenSpec change proposals：
-  - `openspec/changes/add-export-center-api/`
-  - `openspec/changes/add-replay-stub/`
-  - `openspec/changes/harden-bridge-import/`
-  - `openspec/changes/expand-privacy-redaction/`
+  - `openspec/changes/archive/2026-01-08-add-export-center-api`
+  - `openspec/changes/archive/2026-01-08-add-replay-stub`
+  - `openspec/changes/archive/2026-01-08-harden-bridge-import`
+  - `openspec/changes/archive/2026-01-08-expand-privacy-redaction`
+- P1 changes（A/B/C 并行）：
+  - `openspec/changes/update-replay-ui-transcript-viewer`
+  - `openspec/changes/add-openai-notes-generator`
+  - `openspec/changes/update-vscode-sync-ux`
+- GitHub Project：`AI Learning OS v0.3.4`（Project #3），Issues：#25（Replay UI）/#26（OpenAI Notes）/#27（VSCode UX）
 - GitHub 协作模板：
   - `.github/pull_request_template.md`
   - `.github/ISSUE_TEMPLATE/feature.md`
@@ -121,10 +126,10 @@ codex -C D:\cce-wt-privacy
   - 负责：写/评审 proposal、拆 issue、维护 Project 字段、合并顺序
 - **实现会话 A（例如 Export Center）**
   - 只改：`bridge/**`
-  - 负责：严格按 `openspec/changes/add-export-center-api/tasks.md` 逐条实现
+  - 负责：严格按 `openspec/changes/archive/2026-01-08-add-export-center-api/tasks.md` 逐条实现（已完成）
 - **实现会话 B（例如 Replay Stub）**
   - 只改：`bridge/**` 或 `frontend/**`（二选一，坚持到底）
-  - 负责：严格按 `openspec/changes/add-replay-stub/tasks.md` 逐条实现
+  - 负责：严格按 `openspec/changes/archive/2026-01-08-add-replay-stub/tasks.md` 逐条实现（已完成）
 
 ### 3.2 多 Codex CLI“同步协同”的关键规则（防冲突）
 1. **一个会话只做一个 Issue**（同模块也不要并行两条）

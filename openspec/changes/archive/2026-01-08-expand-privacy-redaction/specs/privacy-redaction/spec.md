@@ -45,6 +45,8 @@ The system SHALL redact common secret patterns from downstream content.
 - Pattern example: best-effort matcher that replaces digit-heavy phone-like strings, while avoiding ISO dates like `YYYY-MM-DD`
 - Example: `+1 (415) 555-2671` → `[REDACTED_PHONE]`
 
+## ADDED Requirements
+
 ### Requirement: Redaction is applied before leaving the local trust boundary
 The system SHALL apply redaction before sending content to external systems.
 
