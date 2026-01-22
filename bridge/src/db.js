@@ -95,6 +95,16 @@ function makeBridgeDb(db, driver) {
     return statements.getLatestSourceBySessionId.get({ session_id }) || null;
   }
 
+  function listProjects({ limit = 200 } = {}) {
+    const lim = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.trunc(limit))) : 200;
+    return statements.listProjects.all({ limit: lim }) || [];
+  }
+
+  function listSessionsByProjectId({ project_id, limit = 200 } = {}) {
+    const lim = Number.isFinite(limit) ? Math.max(1, Math.min(500, Math.trunc(limit))) : 200;
+    return statements.listSessionsByProjectId.all({ project_id, limit: lim }) || [];
+  }
+
   function createExport({
     id,
     project_id,
@@ -152,6 +162,8 @@ function makeBridgeDb(db, driver) {
     getProjectById,
     getSessionById,
     getLatestSourceBySessionId,
+    listProjects,
+    listSessionsByProjectId,
     createExport,
     updateExport,
     getExportById,
@@ -231,14 +243,35 @@ function prepareStatements(db) {
        ORDER BY created_at DESC
        LIMIT @limit`,
     ),
+    listProjects: db.prepare(
+      `SELECT id, name, cwd, created_at
+       FROM projects
+       ORDER BY created_at DESC
+       LIMIT @limit`,
+    ),
+    listSessionsByProjectId: db.prepare(
+      `SELECT id, project_id, name, imported_at, source_type
+       FROM sessions
+       WHERE project_id = @project_id
+       ORDER BY imported_at DESC
+       LIMIT @limit`,
+    ),
     listRecentSessions: db.prepare(
       `SELECT
          s.id AS session_id,
          s.project_id AS project_id,
          s.name AS session_name,
          s.imported_at AS imported_at,
+         s.source_type AS source_type,
          p.name AS project_name,
-         p.cwd AS project_cwd
+         p.cwd AS project_cwd,
+         (
+           SELECT src.message_count
+           FROM sources src
+           WHERE src.session_id = s.id
+           ORDER BY src.created_at DESC
+           LIMIT 1
+         ) AS message_count
        FROM sessions s
        JOIN projects p ON p.id = s.project_id
        ORDER BY s.imported_at DESC

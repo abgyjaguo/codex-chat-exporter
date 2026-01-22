@@ -96,6 +96,15 @@ function createApp(options = {}) {
   const app = express();
   app.use(express.json({ limit: bodyLimit }));
 
+  // Allow browser clients (e.g. Vite dev server) to call Bridge JSON APIs.
+  app.use("/bridge/v1", (req, res, next) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Headers", "content-type,authorization");
+    res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    if (req.method === "OPTIONS") return res.status(204).end();
+    return next();
+  });
+
   app.get("/replay", (req, res) => {
     let limit = 50;
     const limitRaw = typeof req.query.limit === "string" ? req.query.limit.trim() : "";
@@ -164,6 +173,101 @@ function createApp(options = {}) {
 
   app.get("/bridge/v1/health", (req, res) => {
     res.type("text/plain").send("ok");
+  });
+
+  app.get("/bridge/v1/projects", (req, res) => {
+    let limit = 200;
+    const limitRaw = typeof req.query.limit === "string" ? req.query.limit.trim() : "";
+    if (limitRaw) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(500, Math.floor(parsed));
+    }
+
+    const rows = bridgeDb.listProjects({ limit });
+    res.json({
+      projects: rows.map((p) => ({
+        project_id: p.id,
+        name: p.name,
+        cwd: p.cwd,
+        created_at: p.created_at,
+      })),
+    });
+  });
+
+  app.get("/bridge/v1/projects/:project_id/sessions", (req, res) => {
+    const projectId = String(req.params.project_id || "");
+    if (!projectId) return sendError(res, 400, "invalid_request", "project_id must be provided");
+
+    const projectRow = bridgeDb.getProjectById(projectId);
+    if (!projectRow) return sendError(res, 404, "not_found", "Project not found", { project_id: projectId });
+
+    let limit = 200;
+    const limitRaw = typeof req.query.limit === "string" ? req.query.limit.trim() : "";
+    if (limitRaw) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(500, Math.floor(parsed));
+    }
+
+    const rows = bridgeDb.listSessionsByProjectId({ project_id: projectId, limit });
+    res.json({
+      sessions: rows.map((s) => ({
+        session_id: s.id,
+        project_id: s.project_id,
+        name: s.name,
+        imported_at: s.imported_at,
+        source_type: s.source_type,
+      })),
+    });
+  });
+
+  app.get("/bridge/v1/sessions/recent", (req, res) => {
+    let limit = 50;
+    const limitRaw = typeof req.query.limit === "string" ? req.query.limit.trim() : "";
+    if (limitRaw) {
+      const parsed = Number(limitRaw);
+      if (Number.isFinite(parsed) && parsed > 0) limit = Math.min(200, Math.floor(parsed));
+    }
+
+    const rows = bridgeDb.listRecentSessions({ limit });
+    res.json({
+      sessions: rows.map((r) => ({
+        project_id: r.project_id,
+        project_name: r.project_name,
+        project_cwd: r.project_cwd,
+        session_id: r.session_id,
+        session_name: r.session_name,
+        imported_at: r.imported_at,
+        source_type: r.source_type,
+        message_count: Number.isFinite(r.message_count) ? r.message_count : 0,
+      })),
+    });
+  });
+
+  app.get("/bridge/v1/projects/:project_id/sessions/:session_id/messages", (req, res) => {
+    const projectId = String(req.params.project_id || "");
+    const sessionId = String(req.params.session_id || "");
+
+    const projectRow = bridgeDb.getProjectById(projectId);
+    if (!projectRow) return sendError(res, 404, "not_found", "Project not found", { project_id: projectId });
+
+    const sessionRow = bridgeDb.getSessionById(sessionId);
+    if (!sessionRow || sessionRow.project_id !== projectId) {
+      return sendError(res, 404, "not_found", "Session not found", { project_id: projectId, session_id: sessionId });
+    }
+
+    const sourceRow = bridgeDb.getLatestSourceBySessionId(sessionId);
+    if (!sourceRow) {
+      return sendError(res, 404, "not_found", "No imported source found for session", { session_id: sessionId });
+    }
+
+    const messages = safeJsonParseArray(sourceRow.normalized_json);
+    if (messages == null) {
+      return sendError(res, 500, "invalid_state", "Failed to parse normalized_json for session source", {
+        session_id: sessionId,
+      });
+    }
+
+    res.json({ messages });
   });
 
   app.post("/bridge/v1/import/codex-chat", (req, res) => {
