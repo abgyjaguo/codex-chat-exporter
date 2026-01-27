@@ -84,6 +84,25 @@ test("bridge JSON APIs list projects/sessions and fetch messages", async () => {
       assert.ok(Array.isArray(messagesJson.messages));
       assert.equal(messagesJson.messages.length, 2);
       assert.equal(messagesJson.messages[0].message_id, "m-000001");
+
+      // Sync validation: filesystem adapter requires OPEN_NOTEBOOK_FS_ROOT.
+      const fsSync = await postJson(baseUrl, `/bridge/v1/projects/${importJson.project_id}/sync/open-notebook`, {
+        session_id: importJson.session_id,
+        targets: ["sources"],
+        adapter: "filesystem",
+      });
+      assert.equal(fsSync.res.status, 400);
+      assert.ok(String(fsSync.json?.error?.message || "").includes("OPEN_NOTEBOOK_FS_ROOT"));
+
+      // Sync validation: http adapter requires api base URL (or env OPEN_NOTEBOOK_API_URL).
+      const httpSync = await postJson(baseUrl, `/bridge/v1/projects/${importJson.project_id}/sync/open-notebook`, {
+        session_id: importJson.session_id,
+        targets: ["sources"],
+        adapter: "http",
+        http: {},
+      });
+      assert.equal(httpSync.res.status, 400);
+      assert.ok(String(httpSync.json?.error?.message || "").toLowerCase().includes("api"));
     });
   } finally {
     try {
@@ -92,4 +111,3 @@ test("bridge JSON APIs list projects/sessions and fetch messages", async () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
-

@@ -7,6 +7,7 @@ const { stableId, randomId } = require("./lib/ids");
 const { filterCodexJsonlRaw, parseCodexJsonl } = require("./lib/codexJsonl");
 const { sendError } = require("./lib/errors");
 const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
+const { OpenNotebookHttpAdapter } = require("./adapters/http");
 const { anchorForIndex, renderSourceMarkdown } = require("./lib/openNotebookContent");
 const { generateNotes } = require("./lib/notesGenerator");
 const { getBridgePublicBaseUrl } = require("./lib/replayUrls");
@@ -715,6 +716,8 @@ function createApp(options = {}) {
     const sessionId = typeof body.session_id === "string" ? body.session_id.trim() : "";
     const targetsRaw = body.targets;
     const notesProvider = typeof body.notes_provider === "string" ? body.notes_provider.trim() : "";
+    const adapterRaw = typeof body.adapter === "string" ? body.adapter.trim().toLowerCase() : "";
+    const httpRaw = body.http && typeof body.http === "object" ? body.http : null;
 
     if (!sessionId) {
       return sendError(res, 400, "invalid_request", "session_id must be a non-empty string");
@@ -731,15 +734,7 @@ function createApp(options = {}) {
       return sendError(res, 400, "invalid_request", "targets must include at least one of: sources, notes");
     }
 
-    const rootDir = (process.env[OPEN_NOTEBOOK_FS_ROOT_ENV] || "").trim();
-    if (!rootDir) {
-      return sendError(
-        res,
-        400,
-        "invalid_request",
-        `OpenNotebook filesystem root is not set. Please set ${OPEN_NOTEBOOK_FS_ROOT_ENV} to a writable directory.`,
-      );
-    }
+    const adapterType = adapterRaw || "filesystem";
 
     const projectRow = bridgeDb.getProjectById(projectId);
     if (!projectRow) {
@@ -770,7 +765,47 @@ function createApp(options = {}) {
     }
 
     const replayBaseUrl = getBridgePublicBaseUrl() || `${req.protocol}://${req.get("host")}`;
-    const adapter = FilesystemAdapter.fromEnv(OPEN_NOTEBOOK_FS_ROOT_ENV);
+
+    let adapter;
+    let adapterMeta = {};
+
+    if (adapterType === "filesystem") {
+      const rootDir = (process.env[OPEN_NOTEBOOK_FS_ROOT_ENV] || "").trim();
+      if (!rootDir) {
+        return sendError(
+          res,
+          400,
+          "invalid_request",
+          `OpenNotebook filesystem root is not set. Please set ${OPEN_NOTEBOOK_FS_ROOT_ENV} to a writable directory.`,
+        );
+      }
+      adapter = FilesystemAdapter.fromEnv(OPEN_NOTEBOOK_FS_ROOT_ENV);
+      adapterMeta = { adapter: "filesystem", root_dir: rootDir };
+    } else if (adapterType === "http") {
+      const httpApiBaseUrl =
+        (httpRaw && typeof httpRaw.api_base_url === "string" ? httpRaw.api_base_url.trim() : "") ||
+        (httpRaw && typeof httpRaw.apiBaseUrl === "string" ? httpRaw.apiBaseUrl.trim() : "") ||
+        (process.env.OPEN_NOTEBOOK_API_URL || "").trim();
+
+      const httpToken =
+        (httpRaw && typeof httpRaw.app_password === "string" ? httpRaw.app_password.trim() : "") ||
+        (httpRaw && typeof httpRaw.token === "string" ? httpRaw.token.trim() : "") ||
+        (process.env.OPEN_NOTEBOOK_APP_PASSWORD || "").trim();
+
+      if (!httpApiBaseUrl) {
+        return sendError(
+          res,
+          400,
+          "invalid_request",
+          "OpenNotebook HTTP API base URL is not set. Provide body.http.apiBaseUrl (or set OPEN_NOTEBOOK_API_URL).",
+        );
+      }
+
+      adapter = new OpenNotebookHttpAdapter(httpApiBaseUrl, { appPassword: httpToken || null });
+      adapterMeta = { adapter: "http", api_base_url: httpApiBaseUrl };
+    } else {
+      return sendError(res, 400, "invalid_request", "adapter must be one of: filesystem, http", { adapter: adapterType });
+    }
 
     const notebookProjectKey = projectRow.cwd;
     const notebookIdPromise = adapter.createOrGetNotebook(notebookProjectKey);
@@ -840,8 +875,7 @@ function createApp(options = {}) {
 
         res.json({
           notebook: {
-            adapter: "filesystem",
-            root_dir: rootDir,
+            ...adapterMeta,
             project_key: notebookProjectKey,
             notebook_id: notebookId,
           },
@@ -853,9 +887,10 @@ function createApp(options = {}) {
         });
       })
       .catch((err) => {
-        return sendError(res, 500, "sync_failed", "Failed to sync to OpenNotebook filesystem adapter", {
+        return sendError(res, 500, "sync_failed", "Failed to sync to OpenNotebook adapter", {
           project_id: projectId,
           session_id: sessionId,
+          adapter: adapterType,
           message: err instanceof Error ? err.message : String(err),
         });
       });
