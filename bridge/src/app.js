@@ -216,6 +216,239 @@ function parseKiroChatJson(text) {
   return { messages, message_count: messages.length, warnings: [] };
 }
 
+function normalizeRole(raw) {
+  const r = String(raw || "").trim().toLowerCase();
+  if (!r) return null;
+  if (r === "user" || r === "human" || r === "prompt") return "user";
+  if (r === "assistant" || r === "ai" || r === "model" || r === "bot") return "assistant";
+  if (r === "tool" || r === "function") return "tool";
+  if (r === "system") return "system";
+  return null;
+}
+
+function extractTextFromContent(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((c) => {
+        if (typeof c === "string") return c;
+        if (c && typeof c === "object" && typeof c.text === "string") return c.text;
+        if (c && typeof c === "object" && typeof c.content === "string") return c.content;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (content && typeof content === "object") {
+    if (typeof content.text === "string") return content.text;
+    if (typeof content.content === "string") return content.content;
+  }
+  return "";
+}
+
+function extractMessageFromUnknownJson(obj) {
+  if (!obj || typeof obj !== "object") return null;
+
+  // Claude Code JSONL shape: { type, timestamp, message: { role, content } }
+  if (typeof obj.type === "string" && obj.message && typeof obj.message === "object") {
+    const role = normalizeRole(obj.message.role || obj.type);
+    const text = extractTextFromContent(obj.message.content);
+    const timestamp = typeof obj.timestamp === "string" ? obj.timestamp : null;
+    return role && text.trim() ? { role, text: text.trim(), timestamp } : null;
+  }
+
+  // Simple chat shape: { role, content/text/message }
+  const role = normalizeRole(obj.role || obj.type);
+  const text = extractTextFromContent(obj.content ?? obj.text ?? obj.message);
+  const timestamp = typeof obj.timestamp === "string" ? obj.timestamp : typeof obj.created_at === "string" ? obj.created_at : null;
+  return role && text.trim() ? { role, text: text.trim(), timestamp } : null;
+}
+
+function parseGenericJsonl(text) {
+  const lines = String(text || "").split(/\r?\n/);
+  const messages = [];
+  const warnings = [];
+
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      warnings.push({ code: "invalid_jsonl_line", message: "Failed to parse one JSONL line" });
+      continue;
+    }
+
+    const m = extractMessageFromUnknownJson(obj);
+    if (!m) continue;
+    messages.push({ ...m, message_id: messageIdForIndex(messages.length) });
+  }
+
+  return { messages, message_count: messages.length, warnings };
+}
+
+function parseGenericJson(text) {
+  let obj;
+  try {
+    obj = JSON.parse(String(text || ""));
+  } catch {
+    return { messages: [], message_count: 0, warnings: [{ code: "invalid_json", message: "Invalid JSON" }] };
+  }
+
+  const messages = [];
+  const warnings = [];
+
+  const arr = Array.isArray(obj) ? obj : Array.isArray(obj.messages) ? obj.messages : null;
+  if (arr) {
+    for (const item of arr) {
+      const m = extractMessageFromUnknownJson(item);
+      if (!m) continue;
+      messages.push({ ...m, message_id: messageIdForIndex(messages.length) });
+    }
+    return { messages, message_count: messages.length, warnings };
+  }
+
+  // Kiro-like: { chat: [{ role, content }] }
+  if (obj && typeof obj === "object" && Array.isArray(obj.chat)) {
+    return parseKiroChatJson(JSON.stringify(obj));
+  }
+
+  // Fallback: store a single system message with the raw JSON for visibility.
+  messages.push({
+    role: "system",
+    timestamp: null,
+    text: JSON.stringify(obj, null, 2).slice(0, 50_000),
+    message_id: messageIdForIndex(0),
+  });
+  warnings.push({ code: "unsupported_json_shape", message: "Unsupported JSON shape; stored as a single system message" });
+  return { messages, message_count: messages.length, warnings };
+}
+
+function msToIso(ms) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return null;
+  try {
+    return new Date(ms).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function parseCursorComposerDataJson(text) {
+  let obj;
+  try {
+    obj = JSON.parse(String(text || ""));
+  } catch {
+    return { messages: [], message_count: 0, warnings: [{ code: "invalid_json", message: "Invalid Cursor composerData JSON" }] };
+  }
+
+  const prompt = typeof obj.text === "string" && obj.text.trim() ? obj.text.trim() : typeof obj.richText === "string" ? obj.richText.trim() : "";
+  const timestamp = msToIso(obj.lastUpdatedAt) || msToIso(obj.createdAt);
+
+  const warnings = [];
+  if (!prompt) warnings.push({ code: "empty_prompt", message: "Cursor composerData.text is empty; imported with no user message" });
+
+  const messages = [];
+  if (prompt) {
+    messages.push({
+      role: "user",
+      timestamp,
+      text: prompt,
+      message_id: messageIdForIndex(0),
+    });
+  }
+
+  return { messages, message_count: messages.length, warnings };
+}
+
+function allowedRootsForCandidate(candidate) {
+  const tool = typeof candidate?.tool === "string" ? candidate.tool.trim() : "";
+  const hostApp = typeof candidate?.hostApp === "string" ? candidate.hostApp.trim() : "";
+  const home = process.env.USERPROFILE || process.env.HOME || "";
+  const appData = process.env.APPDATA || "";
+
+  const roots = [];
+
+  if (home) {
+    if (tool === "codex") roots.push(path.join(home, ".codex", "sessions"));
+    if (tool === "claude-code") roots.push(path.join(home, ".claude", "projects"));
+    if (tool === "opencode") {
+      roots.push(path.join(home, ".opencode"));
+      roots.push(path.join(home, ".open-code"));
+      roots.push(path.join(home, ".openCode"));
+      roots.push(path.join(home, ".config", "opencode"));
+      roots.push(path.join(home, ".config", "open-code"));
+    }
+  }
+
+  if (appData) {
+    if (tool === "kiro" || hostApp === "kiro") roots.push(path.join(appData, "Kiro", "User", "globalStorage", "kiro.kiroagent"));
+    if (tool === "cursor" || hostApp === "cursor") roots.push(path.join(appData, "Cursor"));
+    if (tool === "antigravity" || hostApp === "antigravity") roots.push(path.join(appData, "Antigravity"));
+
+    if (tool === "vscode-extension") {
+      // Allow extension transcript files under common VSCode-family host roots.
+      roots.push(path.join(appData, "Code"));
+      roots.push(path.join(appData, "Cursor"));
+      roots.push(path.join(appData, "Kiro"));
+      roots.push(path.join(appData, "Antigravity"));
+    }
+
+    if (tool === "opencode") roots.push(path.join(appData, "opencode"));
+  }
+
+  return roots.filter(Boolean);
+}
+
+function readSqliteKvValue(dbPath, table, key) {
+  if (!dbPath || !table || !key) return null;
+  if (table !== "ItemTable" && table !== "cursorDiskKV") return null;
+
+  try {
+    const sqlite = require("node:sqlite");
+    if (sqlite && typeof sqlite.DatabaseSync === "function") {
+      const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      try {
+        try {
+          db.exec("PRAGMA query_only = ON;");
+        } catch {
+          // ignore
+        }
+        const row = db.prepare(`SELECT value FROM ${table} WHERE key = ? LIMIT 1`).get(key);
+        if (!row) return null;
+        const v = row.value;
+        if (Buffer.isBuffer(v)) return v.toString("utf-8");
+        return String(v ?? "");
+      } finally {
+        db.close();
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    // Optional fallback for environments without node:sqlite
+    const BetterSqlite3 = require("better-sqlite3");
+    if (typeof BetterSqlite3 === "function") {
+      const db = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        const row = db.prepare(`SELECT value FROM ${table} WHERE key = ? LIMIT 1`).get(key);
+        if (!row) return null;
+        const v = row.value;
+        if (Buffer.isBuffer(v)) return v.toString("utf-8");
+        return String(v ?? "");
+      } finally {
+        db.close();
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
 function findClaudeSessionMeta(jsonlText) {
   const lines = String(jsonlText || "").split(/\r?\n/).slice(0, 80);
   for (const line of lines) {
@@ -372,42 +605,66 @@ function createApp(options = {}) {
     const sourceKind = source && typeof source.kind === "string" ? source.kind : "";
 
     if (!tool) return sendError(res, 400, "invalid_request", "candidate.tool must be a non-empty string");
-    if (!source || sourceKind !== "file") {
-      return sendError(res, 400, "invalid_request", "Only candidate.source.kind=file is supported for import");
+    if (!source || (sourceKind !== "file" && sourceKind !== "sqlite-kv")) {
+      return sendError(res, 400, "invalid_request", "candidate.source.kind must be file or sqlite-kv");
     }
 
-    const filePath = typeof source.path === "string" ? source.path.trim() : "";
-    const format = typeof source.format === "string" ? source.format.trim() : "";
-    if (!filePath) return sendError(res, 400, "invalid_request", "candidate.source.path must be a non-empty string");
+    const requestedPath = typeof source.path === "string" ? source.path.trim() : "";
+    if (!requestedPath) return sendError(res, 400, "invalid_request", "candidate.source.path must be a non-empty string");
 
-    const home = process.env.USERPROFILE || process.env.HOME || "";
-    const appData = process.env.APPDATA || "";
-    const allowedRoots = [];
-    if (home) {
-      allowedRoots.push(path.join(home, ".codex", "sessions"));
-      allowedRoots.push(path.join(home, ".claude", "projects"));
-    }
-    if (appData) {
-      allowedRoots.push(path.join(appData, "Kiro", "User", "globalStorage", "kiro.kiroagent"));
+    const allowedRoots = allowedRootsForCandidate(candidate);
+
+    if (allowedRoots.length === 0) {
+      return sendError(res, 403, "forbidden", "No allowed roots configured for this candidate tool", { tool });
     }
 
-    if (!allowedRoots.some((root) => isPathWithin(root, filePath))) {
-      return sendError(res, 403, "forbidden", "Path is not within allowed transcript roots", { path: filePath });
+    if (!allowedRoots.some((root) => isPathWithin(root, requestedPath))) {
+      return sendError(res, 403, "forbidden", "Path is not within allowed transcript roots", { path: requestedPath });
     }
 
-    let text;
-    let stat;
-    try {
-      stat = fs.statSync(filePath);
-      text = fs.readFileSync(filePath, "utf-8");
-    } catch (err) {
-      return sendError(res, 404, "not_found", "Failed to read transcript file", {
-        path: filePath,
-        message: err instanceof Error ? err.message : String(err),
-      });
+    let text = "";
+    let stat = null;
+    let exportedAt = new Date().toISOString();
+    let format = "";
+
+    if (sourceKind === "file") {
+      format = typeof source.format === "string" ? source.format.trim() : "";
+
+      try {
+        stat = fs.statSync(requestedPath);
+        text = fs.readFileSync(requestedPath, "utf-8");
+      } catch (err) {
+        return sendError(res, 404, "not_found", "Failed to read transcript file", {
+          path: requestedPath,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      exportedAt = new Date(stat.mtimeMs || Date.now()).toISOString();
+    } else {
+      const table = typeof source.table === "string" ? source.table.trim() : "";
+      const key = typeof source.key === "string" ? source.key.trim() : "";
+      if (!table) return sendError(res, 400, "invalid_request", "candidate.source.table must be a non-empty string");
+      if (!key) return sendError(res, 400, "invalid_request", "candidate.source.key must be a non-empty string");
+
+      const valueText = readSqliteKvValue(requestedPath, table, key);
+      if (valueText == null) {
+        return sendError(res, 404, "not_found", "Failed to read sqlite-kv transcript value", {
+          path: requestedPath,
+          table,
+          key,
+        });
+      }
+
+      text = valueText;
+      format = "sqlite-kv";
+
+      // Best-effort "exportedAt" based on candidate preview timestamps
+      const updatedAt = typeof candidate.preview?.updatedAt === "string" ? candidate.preview.updatedAt : "";
+      const startedAt = typeof candidate.preview?.startedAt === "string" ? candidate.preview.startedAt : "";
+      exportedAt = updatedAt || startedAt || exportedAt;
     }
 
-    const exportedAt = new Date(stat.mtimeMs || Date.now()).toISOString();
     const includeToolOutputs = body.include_tool_outputs === true;
     const includeEnvironmentContext = body.include_environment_context === true;
 
@@ -421,7 +678,7 @@ function createApp(options = {}) {
     let raw_jsonl = "";
     let raw_markdown = null;
 
-    if (tool === "codex" && format === "jsonl") {
+    if (tool === "codex" && sourceKind === "file" && format === "jsonl") {
       const meta = tryParseCodexSessionMeta(text);
       if (meta && meta.cwd) {
         projectCwd = meta.cwd;
@@ -433,7 +690,7 @@ function createApp(options = {}) {
       parsed = parseCodexJsonl(raw_jsonl, { includeToolOutputs, includeEnvironmentContext });
       for (const w of parsed.warnings) warnings.push(w);
       source_type = "codex_jsonl";
-    } else if (tool === "claude-code" && format === "jsonl") {
+    } else if (tool === "claude-code" && sourceKind === "file" && format === "jsonl") {
       parsed = parseClaudeCodeJsonl(text);
       source_type = "claude_code_jsonl";
 
@@ -446,23 +703,58 @@ function createApp(options = {}) {
       if (meta.sessionId) sessionName = meta.sessionId;
 
       raw_jsonl = text;
-    } else if (tool === "kiro" && (format === "chat-json" || filePath.toLowerCase().endsWith(".chat"))) {
+    } else if (tool === "kiro" && sourceKind === "file" && (format === "chat-json" || requestedPath.toLowerCase().endsWith(".chat"))) {
       parsed = parseKiroChatJson(text);
       source_type = "kiro_chat";
       raw_jsonl = text;
       raw_markdown = null;
 
-      const workspaceId = path.basename(path.dirname(filePath));
+      const workspaceId = path.basename(path.dirname(requestedPath));
       projectCwd = `kiro://${workspaceId}`;
       if (!projectName) projectName = `Kiro (${workspaceId.slice(0, 8)})`;
-      if (!sessionName) sessionName = path.basename(filePath);
+      if (!sessionName) sessionName = path.basename(requestedPath);
+    } else if (tool === "cursor" && sourceKind === "sqlite-kv") {
+      parsed = parseCursorComposerDataJson(text);
+      source_type = "cursor_sqlite_kv";
+      raw_jsonl = text;
+      raw_markdown = null;
+
+      projectCwd = "cursor://globalStorage";
+      if (!projectName) projectName = "Cursor";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "cursor";
+    } else if (tool === "antigravity" && sourceKind === "sqlite-kv") {
+      parsed = parseGenericJson(text);
+      source_type = "antigravity_sqlite_kv";
+      raw_jsonl = text;
+      raw_markdown = null;
+
+      projectCwd = "antigravity://globalStorage";
+      if (!projectName) projectName = "Antigravity";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "antigravity";
+    } else if (tool === "vscode-extension" && sourceKind === "file") {
+      source_type = "vscode_extension_file";
+      if (format === "jsonl") parsed = parseGenericJsonl(text);
+      else if (format === "json") parsed = parseGenericJson(text);
+      else if (format === "chat-json") parsed = parseKiroChatJson(text);
+      else {
+        raw_markdown = text;
+        parsed = {
+          messages: [{ role: "user", timestamp: null, text: String(text || "").slice(0, 50_000), message_id: messageIdForIndex(0) }],
+          message_count: 1,
+          warnings: [{ code: "unsupported_format", message: `Unsupported format for vscode-extension: ${format || "unknown"}` }],
+        };
+      }
+      for (const w of parsed.warnings || []) warnings.push(w);
+      raw_jsonl = text;
     } else {
-      return sendError(res, 400, "unsupported", "Unsupported transcript import type", { tool, format, path: filePath });
+      return sendError(res, 400, "unsupported", "Unsupported transcript import type", { tool, format, path: requestedPath, sourceKind });
     }
 
     if (!projectName) projectName = "Imported Chat";
-    if (!projectCwd) projectCwd = `file://${filePath}`;
-    if (!sessionName) sessionName = path.basename(filePath);
+    if (!projectCwd) projectCwd = `file://${requestedPath}`;
+    if (!sessionName) sessionName = path.basename(requestedPath);
 
     const project_id = stableId("proj", projectCwd);
     const session_id = stableId("sess", project_id, sessionName);
