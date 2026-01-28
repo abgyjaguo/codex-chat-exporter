@@ -334,7 +334,7 @@ function msToIso(ms) {
   }
 }
 
-function parseCursorComposerDataJson(text) {
+function parseCursorComposerDataJson(text, opts = {}) {
   let obj;
   try {
     obj = JSON.parse(String(text || ""));
@@ -342,20 +342,69 @@ function parseCursorComposerDataJson(text) {
     return { messages: [], message_count: 0, warnings: [{ code: "invalid_json", message: "Invalid Cursor composerData JSON" }] };
   }
 
-  const prompt = typeof obj.text === "string" && obj.text.trim() ? obj.text.trim() : typeof obj.richText === "string" ? obj.richText.trim() : "";
+  const warnings = [];
+  const messages = [];
+
+  const bubbleReader = opts && typeof opts === "object" ? opts.bubbleReader : null;
+  const composerId = typeof obj.composerId === "string" ? obj.composerId.trim() : "";
+  const headers = Array.isArray(obj.fullConversationHeadersOnly) ? obj.fullConversationHeadersOnly : null;
+
+  if (bubbleReader && composerId && headers && headers.length > 0) {
+    const maxBubblesRaw = typeof opts.maxBubbles === "number" ? opts.maxBubbles : 800;
+    const maxBubbles = Math.max(1, Math.min(2000, Math.floor(maxBubblesRaw)));
+
+    for (const h of headers) {
+      if (messages.length >= maxBubbles) {
+        warnings.push({ code: "truncated", message: `Cursor conversation truncated at ${maxBubbles} messages.` });
+        break;
+      }
+      if (!h || typeof h !== "object") continue;
+      const bubbleId = typeof h.bubbleId === "string" ? h.bubbleId : "";
+      const bubbleType = typeof h.type === "number" ? h.type : null;
+      if (!bubbleId) continue;
+
+      const bubbleKey = `bubbleId:${composerId}:${bubbleId}`;
+      const bubbleRaw = typeof bubbleReader.get === "function" ? bubbleReader.get(bubbleKey) : null;
+      if (!bubbleRaw) continue;
+
+      let bubble;
+      try {
+        bubble = JSON.parse(String(bubbleRaw));
+      } catch {
+        continue;
+      }
+
+      const bubbleText = typeof bubble?.text === "string" ? bubble.text.trim() : "";
+      if (!bubbleText) continue;
+
+      const role = bubbleType === 1 ? "user" : bubbleType === 2 ? "assistant" : "system";
+      messages.push({
+        role,
+        timestamp: null,
+        text: bubbleText.slice(0, 50_000),
+        message_id: messageIdForIndex(messages.length),
+      });
+    }
+
+    if (messages.length > 0) return { messages, message_count: messages.length, warnings };
+    warnings.push({
+      code: "empty_conversation",
+      message: "Cursor fullConversationHeadersOnly present, but no bubble texts were found.",
+    });
+  }
+
+  const prompt =
+    typeof obj.text === "string" && obj.text.trim()
+      ? obj.text.trim()
+      : typeof obj.richText === "string" && obj.richText.trim()
+        ? obj.richText.trim()
+        : "";
   const timestamp = msToIso(obj.lastUpdatedAt) || msToIso(obj.createdAt);
 
-  const warnings = [];
   if (!prompt) warnings.push({ code: "empty_prompt", message: "Cursor composerData.text is empty; imported with no user message" });
 
-  const messages = [];
   if (prompt) {
-    messages.push({
-      role: "user",
-      timestamp,
-      text: prompt,
-      message_id: messageIdForIndex(0),
-    });
+    messages.push({ role: "user", timestamp, text: prompt.slice(0, 50_000), message_id: messageIdForIndex(0) });
   }
 
   return { messages, message_count: messages.length, warnings };
@@ -372,7 +421,11 @@ function allowedRootsForCandidate(candidate) {
   if (home) {
     if (tool === "codex") roots.push(path.join(home, ".codex", "sessions"));
     if (tool === "claude-code") roots.push(path.join(home, ".claude", "projects"));
+    if (tool === "antigravity") roots.push(path.join(home, ".gemini", "antigravity"));
     if (tool === "opencode") {
+      const xdgDataHome = (process.env.XDG_DATA_HOME || "").trim();
+      if (xdgDataHome) roots.push(path.join(xdgDataHome, "opencode"));
+      roots.push(path.join(home, ".local", "share", "opencode"));
       roots.push(path.join(home, ".opencode"));
       roots.push(path.join(home, ".open-code"));
       roots.push(path.join(home, ".openCode"));
@@ -441,6 +494,80 @@ function readSqliteKvValue(dbPath, table, key) {
       } finally {
         db.close();
       }
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function createSqliteKvReader(dbPath, table) {
+  if (!dbPath || !table) return null;
+  if (table !== "ItemTable" && table !== "cursorDiskKV") return null;
+
+  try {
+    const sqlite = require("node:sqlite");
+    if (sqlite && typeof sqlite.DatabaseSync === "function") {
+      const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+      try {
+        try {
+          db.exec("PRAGMA query_only = ON;");
+        } catch {
+          // ignore
+        }
+        const stmt = db.prepare(`SELECT value FROM ${table} WHERE key = ? LIMIT 1`);
+        return {
+          get: (key) => {
+            if (!key) return null;
+            const row = stmt.get(key);
+            if (!row) return null;
+            const v = row.value;
+            if (Buffer.isBuffer(v)) return v.toString("utf-8");
+            return String(v ?? "");
+          },
+          close: () => {
+            try {
+              db.close();
+            } catch {
+              // ignore
+            }
+          },
+        };
+      } catch (e) {
+        try {
+          db.close();
+        } catch {
+          // ignore
+        }
+      }
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    const BetterSqlite3 = require("better-sqlite3");
+    if (typeof BetterSqlite3 === "function") {
+      const db = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
+      const stmt = db.prepare(`SELECT value FROM ${table} WHERE key = ? LIMIT 1`);
+      return {
+        get: (key) => {
+          if (!key) return null;
+          const row = stmt.get(key);
+          if (!row) return null;
+          const v = row.value;
+          if (Buffer.isBuffer(v)) return v.toString("utf-8");
+          return String(v ?? "");
+        },
+        close: () => {
+          try {
+            db.close();
+          } catch {
+            // ignore
+          }
+        },
+      };
     }
   } catch {
     // ignore
@@ -567,7 +694,16 @@ function createApp(options = {}) {
     const toolsRaw = typeof req.query.tools === "string" ? req.query.tools.trim() : "";
     const includeTools = {};
     if (toolsRaw) {
-      const allowed = new Set(["codex", "claude-code", "opencode", "cursor", "kiro", "antigravity", "vscode-extension"]);
+      const allowed = new Set([
+        "vscode",
+        "codex",
+        "claude-code",
+        "opencode",
+        "cursor",
+        "kiro",
+        "antigravity",
+        "vscode-extension",
+      ]);
       for (const part of toolsRaw.split(",").map((p) => p.trim()).filter(Boolean)) {
         if (allowed.has(part)) includeTools[part] = true;
       }
@@ -632,7 +768,9 @@ function createApp(options = {}) {
 
       try {
         stat = fs.statSync(requestedPath);
-        text = fs.readFileSync(requestedPath, "utf-8");
+        // Antigravity Gemini storage uses binary `.pb` blobs. Avoid decoding/storing raw bytes as UTF-8.
+        if (requestedPath.toLowerCase().endsWith(".pb")) text = "";
+        else text = fs.readFileSync(requestedPath, "utf-8");
       } catch (err) {
         return sendError(res, 404, "not_found", "Failed to read transcript file", {
           path: requestedPath,
@@ -703,6 +841,17 @@ function createApp(options = {}) {
       if (meta.sessionId) sessionName = meta.sessionId;
 
       raw_jsonl = text;
+    } else if (tool === "opencode" && sourceKind === "file" && (format === "chat-json" || format === "json")) {
+      parsed = parseGenericJson(text);
+      source_type = "opencode_session_json";
+      for (const w of parsed.warnings || []) warnings.push(w);
+      raw_jsonl = text;
+      raw_markdown = null;
+
+      projectCwd = "opencode://local";
+      if (!projectName) projectName = "OpenCode";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = path.basename(requestedPath);
     } else if (tool === "kiro" && sourceKind === "file" && (format === "chat-json" || requestedPath.toLowerCase().endsWith(".chat"))) {
       parsed = parseKiroChatJson(text);
       source_type = "kiro_chat";
@@ -714,8 +863,19 @@ function createApp(options = {}) {
       if (!projectName) projectName = `Kiro (${workspaceId.slice(0, 8)})`;
       if (!sessionName) sessionName = path.basename(requestedPath);
     } else if (tool === "cursor" && sourceKind === "sqlite-kv") {
-      parsed = parseCursorComposerDataJson(text);
+      let bubbleReader = null;
+      try {
+        bubbleReader = createSqliteKvReader(requestedPath, "cursorDiskKV");
+        parsed = parseCursorComposerDataJson(text, { bubbleReader });
+      } finally {
+        try {
+          bubbleReader && bubbleReader.close && bubbleReader.close();
+        } catch {
+          // ignore
+        }
+      }
       source_type = "cursor_sqlite_kv";
+      for (const w of parsed.warnings || []) warnings.push(w);
       raw_jsonl = text;
       raw_markdown = null;
 
@@ -723,9 +883,33 @@ function createApp(options = {}) {
       if (!projectName) projectName = "Cursor";
       if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
       if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "cursor";
+    } else if (tool === "antigravity" && sourceKind === "file" && requestedPath.toLowerCase().endsWith(".pb")) {
+      source_type = "antigravity_gemini_pb";
+      raw_jsonl = null;
+      raw_markdown = null;
+
+      parsed = {
+        messages: [
+          {
+            role: "system",
+            timestamp: null,
+            text: "Antigravity conversation blobs (.pb) are not yet supported for parsing. This import stores a stub message only.",
+            message_id: messageIdForIndex(0),
+          },
+        ],
+        message_count: 1,
+        warnings: [{ code: "unsupported_format", message: "Unsupported Antigravity .pb format; stored as stub message only." }],
+      };
+      for (const w of parsed.warnings || []) warnings.push(w);
+
+      projectCwd = "antigravity://gemini";
+      if (!projectName) projectName = "Antigravity";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = path.basename(requestedPath);
     } else if (tool === "antigravity" && sourceKind === "sqlite-kv") {
       parsed = parseGenericJson(text);
       source_type = "antigravity_sqlite_kv";
+      for (const w of parsed.warnings || []) warnings.push(w);
       raw_jsonl = text;
       raw_markdown = null;
 
