@@ -11,6 +11,7 @@
     "verify:replay": "node scripts/verify-replay-fixture.js"
   },
   "dependencies": {
+    "ai-coding-autosearch": "file:../../ai-coding-autosearch",
     "express": "^4.19.2",
     "fflate": "^0.8.2"
   },

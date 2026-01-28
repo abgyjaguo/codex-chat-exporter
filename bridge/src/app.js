@@ -20,6 +20,13 @@ const {
   buildExportZipBuffer,
 } = require("./lib/exportZip");
 
+let autosearchModulePromise = null;
+async function getAutosearchModule() {
+  if (autosearchModulePromise) return autosearchModulePromise;
+  autosearchModulePromise = import("ai-coding-autosearch");
+  return autosearchModulePromise;
+}
+
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
@@ -82,6 +89,150 @@ function sanitizeCodexMarkdown(markdownText, options = {}) {
   }
 
   return out;
+}
+
+function messageIdForIndex(index) {
+  const n = Number(index) + 1;
+  return `m-${String(n).padStart(6, "0")}`;
+}
+
+function isPathWithin(rootDir, targetPath) {
+  try {
+    const root = path.resolve(String(rootDir || ""));
+    const target = path.resolve(String(targetPath || ""));
+    if (!root || !target) return false;
+    const rootNorm = process.platform === "win32" ? root.toLowerCase() : root;
+    const targetNorm = process.platform === "win32" ? target.toLowerCase() : target;
+    return targetNorm === rootNorm || targetNorm.startsWith(rootNorm + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+function tryParseCodexSessionMeta(jsonlText) {
+  const lines = String(jsonlText || "").split(/\r?\n/).slice(0, 50);
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (obj && obj.type === "session_meta" && obj.payload && typeof obj.payload === "object") {
+      const cwdRaw = typeof obj.payload.cwd === "string" ? obj.payload.cwd : "";
+      const cwd = cwdRaw.startsWith("\\\\?\\UNC\\")
+        ? `\\\\${cwdRaw.slice("\\\\?\\UNC\\".length)}`
+        : cwdRaw.startsWith("\\\\?\\")
+          ? cwdRaw.slice("\\\\?\\".length)
+          : cwdRaw;
+      const id = typeof obj.payload.id === "string" ? obj.payload.id : "";
+      return { cwd, id };
+    }
+  }
+  return null;
+}
+
+function parseClaudeCodeJsonl(jsonlText) {
+  const lines = String(jsonlText || "").split(/\r?\n/);
+  const messages = [];
+
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    if (!obj || typeof obj !== "object") continue;
+    if (obj.type !== "user" && obj.type !== "assistant") continue;
+    if (!obj.message || typeof obj.message !== "object") continue;
+
+    const roleRaw = typeof obj.message.role === "string" ? obj.message.role.toLowerCase() : obj.type;
+    const role = roleRaw === "assistant" ? "assistant" : roleRaw === "user" ? "user" : null;
+    if (!role) continue;
+
+    const content = obj.message.content;
+    const text = Array.isArray(content)
+      ? content
+          .map((c) => {
+            if (typeof c === "string") return c;
+            if (c && typeof c === "object" && typeof c.text === "string") return c.text;
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n")
+      : typeof content === "string"
+        ? content
+        : "";
+
+    const trimmedText = String(text || "").trim();
+    if (!trimmedText) continue;
+
+    messages.push({
+      role,
+      timestamp: typeof obj.timestamp === "string" ? obj.timestamp : null,
+      text: trimmedText,
+      message_id: messageIdForIndex(messages.length),
+    });
+  }
+
+  return { messages, message_count: messages.length, warnings: [] };
+}
+
+function parseKiroChatJson(text) {
+  let obj;
+  try {
+    obj = JSON.parse(String(text || ""));
+  } catch {
+    return { messages: [], message_count: 0, warnings: [{ code: "invalid_json", message: "Invalid Kiro .chat JSON" }] };
+  }
+
+  const chat = Array.isArray(obj.chat) ? obj.chat : [];
+  const messages = [];
+
+  for (const item of chat) {
+    if (!item || typeof item !== "object") continue;
+    const roleRaw = typeof item.role === "string" ? item.role.toLowerCase() : "";
+    const role =
+      roleRaw === "human" || roleRaw === "user"
+        ? "user"
+        : roleRaw === "bot" || roleRaw === "assistant"
+          ? "assistant"
+          : roleRaw === "tool"
+            ? "tool"
+            : null;
+    if (!role) continue;
+    const content = typeof item.content === "string" ? item.content : "";
+    const trimmed = content.trim();
+    if (!trimmed) continue;
+    messages.push({ role, timestamp: null, text: trimmed, message_id: messageIdForIndex(messages.length) });
+  }
+
+  return { messages, message_count: messages.length, warnings: [] };
+}
+
+function findClaudeSessionMeta(jsonlText) {
+  const lines = String(jsonlText || "").split(/\r?\n/).slice(0, 80);
+  for (const line of lines) {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) continue;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    if (!obj || typeof obj !== "object") continue;
+    const cwd = typeof obj.cwd === "string" ? obj.cwd : "";
+    const sessionId = typeof obj.sessionId === "string" ? obj.sessionId : "";
+    if (cwd || sessionId) return { cwd, sessionId };
+  }
+  return { cwd: "", sessionId: "" };
 }
 
 function createApp(options = {}) {
@@ -174,6 +325,183 @@ function createApp(options = {}) {
 
   app.get("/bridge/v1/health", (req, res) => {
     res.type("text/plain").send("ok");
+  });
+
+  app.get("/bridge/v1/local-transcripts/discover", async (req, res) => {
+    const scan = typeof req.query.scan === "string" ? req.query.scan.trim().toLowerCase() : "fast";
+    const scanMode = scan === "deep" ? "deep" : "fast";
+
+    const toolsRaw = typeof req.query.tools === "string" ? req.query.tools.trim() : "";
+    const includeTools = {};
+    if (toolsRaw) {
+      const allowed = new Set(["codex", "claude-code", "opencode", "cursor", "kiro", "antigravity", "vscode-extension"]);
+      for (const part of toolsRaw.split(",").map((p) => p.trim()).filter(Boolean)) {
+        if (allowed.has(part)) includeTools[part] = true;
+      }
+    }
+
+    let candidates = [];
+    try {
+      const mod = await getAutosearchModule();
+      candidates = await mod.discoverTranscriptCandidates({
+        scanMode,
+        includeTools: toolsRaw ? includeTools : undefined,
+      });
+    } catch (err) {
+      return sendError(res, 500, "discover_failed", "Failed to auto-discover local transcripts", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    res.json({ candidates });
+  });
+
+  app.post("/bridge/v1/local-transcripts/import", async (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      return sendError(res, 400, "invalid_request", "Request body must be JSON");
+    }
+
+    const candidate = body.candidate;
+    if (!candidate || typeof candidate !== "object") {
+      return sendError(res, 400, "invalid_request", "candidate must be an object");
+    }
+
+    const tool = typeof candidate.tool === "string" ? candidate.tool.trim() : "";
+    const source = candidate.source && typeof candidate.source === "object" ? candidate.source : null;
+    const sourceKind = source && typeof source.kind === "string" ? source.kind : "";
+
+    if (!tool) return sendError(res, 400, "invalid_request", "candidate.tool must be a non-empty string");
+    if (!source || sourceKind !== "file") {
+      return sendError(res, 400, "invalid_request", "Only candidate.source.kind=file is supported for import");
+    }
+
+    const filePath = typeof source.path === "string" ? source.path.trim() : "";
+    const format = typeof source.format === "string" ? source.format.trim() : "";
+    if (!filePath) return sendError(res, 400, "invalid_request", "candidate.source.path must be a non-empty string");
+
+    const home = process.env.USERPROFILE || process.env.HOME || "";
+    const appData = process.env.APPDATA || "";
+    const allowedRoots = [];
+    if (home) {
+      allowedRoots.push(path.join(home, ".codex", "sessions"));
+      allowedRoots.push(path.join(home, ".claude", "projects"));
+    }
+    if (appData) {
+      allowedRoots.push(path.join(appData, "Kiro", "User", "globalStorage", "kiro.kiroagent"));
+    }
+
+    if (!allowedRoots.some((root) => isPathWithin(root, filePath))) {
+      return sendError(res, 403, "forbidden", "Path is not within allowed transcript roots", { path: filePath });
+    }
+
+    let text;
+    let stat;
+    try {
+      stat = fs.statSync(filePath);
+      text = fs.readFileSync(filePath, "utf-8");
+    } catch (err) {
+      return sendError(res, 404, "not_found", "Failed to read transcript file", {
+        path: filePath,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const exportedAt = new Date(stat.mtimeMs || Date.now()).toISOString();
+    const includeToolOutputs = body.include_tool_outputs === true;
+    const includeEnvironmentContext = body.include_environment_context === true;
+
+    const warnings = [];
+    let source_type = "local_transcript";
+    let projectName = typeof candidate.projectName === "string" ? candidate.projectName.trim() : "";
+    let projectCwd = "";
+    let sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+
+    let parsed;
+    let raw_jsonl = "";
+    let raw_markdown = null;
+
+    if (tool === "codex" && format === "jsonl") {
+      const meta = tryParseCodexSessionMeta(text);
+      if (meta && meta.cwd) {
+        projectCwd = meta.cwd;
+        if (!projectName) projectName = path.basename(meta.cwd);
+      }
+      if (meta && meta.id) sessionName = meta.id;
+
+      raw_jsonl = filterCodexJsonlRaw(text, { includeToolOutputs, includeEnvironmentContext });
+      parsed = parseCodexJsonl(raw_jsonl, { includeToolOutputs, includeEnvironmentContext });
+      for (const w of parsed.warnings) warnings.push(w);
+      source_type = "codex_jsonl";
+    } else if (tool === "claude-code" && format === "jsonl") {
+      parsed = parseClaudeCodeJsonl(text);
+      source_type = "claude_code_jsonl";
+
+      // Best-effort: infer project cwd/name from the first message with a cwd field.
+      const meta = findClaudeSessionMeta(text);
+      if (meta.cwd) {
+        projectCwd = meta.cwd;
+        if (!projectName) projectName = path.basename(meta.cwd);
+      }
+      if (meta.sessionId) sessionName = meta.sessionId;
+
+      raw_jsonl = text;
+    } else if (tool === "kiro" && (format === "chat-json" || filePath.toLowerCase().endsWith(".chat"))) {
+      parsed = parseKiroChatJson(text);
+      source_type = "kiro_chat";
+      raw_jsonl = text;
+      raw_markdown = null;
+
+      const workspaceId = path.basename(path.dirname(filePath));
+      projectCwd = `kiro://${workspaceId}`;
+      if (!projectName) projectName = `Kiro (${workspaceId.slice(0, 8)})`;
+      if (!sessionName) sessionName = path.basename(filePath);
+    } else {
+      return sendError(res, 400, "unsupported", "Unsupported transcript import type", { tool, format, path: filePath });
+    }
+
+    if (!projectName) projectName = "Imported Chat";
+    if (!projectCwd) projectCwd = `file://${filePath}`;
+    if (!sessionName) sessionName = path.basename(filePath);
+
+    const project_id = stableId("proj", projectCwd);
+    const session_id = stableId("sess", project_id, sessionName);
+
+    const now = new Date().toISOString();
+    try {
+      bridgeDb.transaction(() => {
+        bridgeDb.ensureProject({
+          id: project_id,
+          name: projectName,
+          cwd: projectCwd,
+          created_at: now,
+        });
+        bridgeDb.ensureSession({
+          id: session_id,
+          project_id,
+          name: sessionName,
+          imported_at: now,
+          source_type,
+        });
+        bridgeDb.addSource({
+          id: randomId("src"),
+          session_id,
+          exported_at: exportedAt,
+          raw_jsonl,
+          raw_markdown,
+          normalized_json: JSON.stringify(parsed.messages || []),
+          warnings_json: JSON.stringify(warnings),
+          message_count: parsed.message_count || 0,
+          created_at: now,
+        });
+      });
+    } catch (err) {
+      return sendError(res, 500, "db_error", "Failed to persist import into SQLite", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    res.json({ project_id, session_id, message_count: parsed.message_count || 0, warnings });
   });
 
   app.get("/bridge/v1/projects", (req, res) => {
