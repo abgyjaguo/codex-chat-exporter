@@ -5,6 +5,8 @@ const express = require("express");
 const { openBridgeDb } = require("./db");
 const { stableId, randomId } = require("./lib/ids");
 const { filterCodexJsonlRaw, parseCodexJsonl } = require("./lib/codexJsonl");
+const { filterClaudeCodeJsonlRaw, parseClaudeCodeJsonl } = require("./lib/claudeCodeJsonl");
+const { parseCursorComposerDataJson } = require("./lib/cursorComposerData");
 const { sendError } = require("./lib/errors");
 const { FilesystemAdapter, DEFAULT_ENV_VAR: OPEN_NOTEBOOK_FS_ROOT_ENV } = require("./adapters/filesystem");
 const { OpenNotebookHttpAdapter } = require("./adapters/http");
@@ -144,56 +146,6 @@ function inferCodexPortFromSessionMeta(meta) {
   if (originator.includes("ide") || source === "ide") return "ide";
   if (originator.includes("cli") || source === "cli") return "cli";
   return null;
-}
-
-function parseClaudeCodeJsonl(jsonlText) {
-  const lines = String(jsonlText || "").split(/\r?\n/);
-  const messages = [];
-
-  for (const line of lines) {
-    const trimmed = String(line || "").trim();
-    if (!trimmed) continue;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    if (!obj || typeof obj !== "object") continue;
-    if (obj.type !== "user" && obj.type !== "assistant") continue;
-    if (!obj.message || typeof obj.message !== "object") continue;
-
-    const roleRaw = typeof obj.message.role === "string" ? obj.message.role.toLowerCase() : obj.type;
-    const role = roleRaw === "assistant" ? "assistant" : roleRaw === "user" ? "user" : null;
-    if (!role) continue;
-
-    const content = obj.message.content;
-    const text = Array.isArray(content)
-      ? content
-          .map((c) => {
-            if (typeof c === "string") return c;
-            if (c && typeof c === "object" && typeof c.text === "string") return c.text;
-            return "";
-          })
-          .filter(Boolean)
-          .join("\n")
-      : typeof content === "string"
-        ? content
-        : "";
-
-    const trimmedText = String(text || "").trim();
-    if (!trimmedText) continue;
-
-    messages.push({
-      role,
-      timestamp: typeof obj.timestamp === "string" ? obj.timestamp : null,
-      text: trimmedText,
-      message_id: messageIdForIndex(messages.length),
-    });
-  }
-
-  return { messages, message_count: messages.length, warnings: [] };
 }
 
 function parseKiroChatJson(text) {
@@ -336,91 +288,7 @@ function parseGenericJson(text) {
   warnings.push({ code: "unsupported_json_shape", message: "Unsupported JSON shape; stored as a single system message" });
   return { messages, message_count: messages.length, warnings };
 }
-
-function msToIso(ms) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return null;
-  try {
-    return new Date(ms).toISOString();
-  } catch {
-    return null;
-  }
-}
-
-function parseCursorComposerDataJson(text, opts = {}) {
-  let obj;
-  try {
-    obj = JSON.parse(String(text || ""));
-  } catch {
-    return { messages: [], message_count: 0, warnings: [{ code: "invalid_json", message: "Invalid Cursor composerData JSON" }] };
-  }
-
-  const warnings = [];
-  const messages = [];
-
-  const bubbleReader = opts && typeof opts === "object" ? opts.bubbleReader : null;
-  const composerId = typeof obj.composerId === "string" ? obj.composerId.trim() : "";
-  const headers = Array.isArray(obj.fullConversationHeadersOnly) ? obj.fullConversationHeadersOnly : null;
-
-  if (bubbleReader && composerId && headers && headers.length > 0) {
-    const maxBubblesRaw = typeof opts.maxBubbles === "number" ? opts.maxBubbles : 800;
-    const maxBubbles = Math.max(1, Math.min(2000, Math.floor(maxBubblesRaw)));
-
-    for (const h of headers) {
-      if (messages.length >= maxBubbles) {
-        warnings.push({ code: "truncated", message: `Cursor conversation truncated at ${maxBubbles} messages.` });
-        break;
-      }
-      if (!h || typeof h !== "object") continue;
-      const bubbleId = typeof h.bubbleId === "string" ? h.bubbleId : "";
-      const bubbleType = typeof h.type === "number" ? h.type : null;
-      if (!bubbleId) continue;
-
-      const bubbleKey = `bubbleId:${composerId}:${bubbleId}`;
-      const bubbleRaw = typeof bubbleReader.get === "function" ? bubbleReader.get(bubbleKey) : null;
-      if (!bubbleRaw) continue;
-
-      let bubble;
-      try {
-        bubble = JSON.parse(String(bubbleRaw));
-      } catch {
-        continue;
-      }
-
-      const bubbleText = typeof bubble?.text === "string" ? bubble.text.trim() : "";
-      if (!bubbleText) continue;
-
-      const role = bubbleType === 1 ? "user" : bubbleType === 2 ? "assistant" : "system";
-      messages.push({
-        role,
-        timestamp: null,
-        text: bubbleText.slice(0, 50_000),
-        message_id: messageIdForIndex(messages.length),
-      });
-    }
-
-    if (messages.length > 0) return { messages, message_count: messages.length, warnings };
-    warnings.push({
-      code: "empty_conversation",
-      message: "Cursor fullConversationHeadersOnly present, but no bubble texts were found.",
-    });
-  }
-
-  const prompt =
-    typeof obj.text === "string" && obj.text.trim()
-      ? obj.text.trim()
-      : typeof obj.richText === "string" && obj.richText.trim()
-        ? obj.richText.trim()
-        : "";
-  const timestamp = msToIso(obj.lastUpdatedAt) || msToIso(obj.createdAt);
-
-  if (!prompt) warnings.push({ code: "empty_prompt", message: "Cursor composerData.text is empty; imported with no user message" });
-
-  if (prompt) {
-    messages.push({ role: "user", timestamp, text: prompt.slice(0, 50_000), message_id: messageIdForIndex(0) });
-  }
-
-  return { messages, message_count: messages.length, warnings };
-}
+// NOTE: Cursor composerData parsing lives in ./lib/cursorComposerData.js
 
 function allowedRootsForCandidate(candidate) {
   const tool = typeof candidate?.tool === "string" ? candidate.tool.trim() : "";
@@ -856,7 +724,8 @@ function createApp(options = {}) {
       for (const w of parsed.warnings) warnings.push(w);
       source_type = "codex_jsonl";
     } else if (tool === "claude-code" && sourceKind === "file" && format === "jsonl") {
-      parsed = parseClaudeCodeJsonl(text);
+      parsed = parseClaudeCodeJsonl(text, { includeToolOutputs, includeEnvironmentContext });
+      for (const w of parsed.warnings || []) warnings.push(w);
       source_type = "claude_code_jsonl";
       const meta = findClaudeSessionMeta(text);
       if (meta.cwd) {
@@ -1069,7 +938,9 @@ function createApp(options = {}) {
       for (const w of parsed.warnings) warnings.push(w);
       source_type = "codex_jsonl";
     } else if (tool === "claude-code" && sourceKind === "file" && format === "jsonl") {
-      parsed = parseClaudeCodeJsonl(text);
+      raw_jsonl = filterClaudeCodeJsonlRaw(text, { includeToolOutputs, includeEnvironmentContext });
+      parsed = parseClaudeCodeJsonl(raw_jsonl, { includeToolOutputs, includeEnvironmentContext });
+      for (const w of parsed.warnings || []) warnings.push(w);
       source_type = "claude_code_jsonl";
 
       // Best-effort: infer project cwd/name from the first message with a cwd field.
@@ -1079,8 +950,6 @@ function createApp(options = {}) {
         if (!projectName) projectName = path.basename(meta.cwd);
       }
       if (meta.sessionId) sessionName = meta.sessionId;
-
-      raw_jsonl = text;
     } else if (tool === "opencode" && sourceKind === "file" && (format === "chat-json" || format === "json")) {
       parsed = parseGenericJson(text);
       source_type = "opencode_session_json";
@@ -1305,11 +1174,59 @@ function createApp(options = {}) {
       return sendError(res, 404, "not_found", "No imported source found for session", { session_id: sessionId });
     }
 
-    const messages = safeJsonParseArray(sourceRow.normalized_json);
+    let messages = safeJsonParseArray(sourceRow.normalized_json);
     if (messages == null) {
       return sendError(res, 500, "invalid_state", "Failed to parse normalized_json for session source", {
         session_id: sessionId,
       });
+    }
+
+    // Lazy-migrate legacy imports that lacked structured `blocks`.
+    const hasBlocks = messages.some((m) => m && typeof m === "object" && Array.isArray(m.blocks) && m.blocks.length > 0);
+    if (!hasBlocks && typeof sourceRow.raw_jsonl === "string" && sourceRow.raw_jsonl.trim()) {
+      const sourceType = typeof sessionRow.source_type === "string" ? sessionRow.source_type : "";
+      let upgraded = null;
+
+      try {
+        if (sourceType === "codex_jsonl") {
+          upgraded = parseCodexJsonl(sourceRow.raw_jsonl, { includeToolOutputs: true, includeEnvironmentContext: true }).messages;
+        } else if (sourceType === "claude_code_jsonl") {
+          upgraded = parseClaudeCodeJsonl(sourceRow.raw_jsonl, { includeToolOutputs: true, includeEnvironmentContext: true }).messages;
+        } else if (sourceType === "cursor_sqlite_kv") {
+          const appData = process.env.APPDATA || "";
+          const cursorDbPath = appData ? path.join(appData, "Cursor", "User", "globalStorage", "state.vscdb") : "";
+          if (cursorDbPath && fs.existsSync(cursorDbPath)) {
+            let bubbleReader = null;
+            try {
+              bubbleReader = createSqliteKvReader(cursorDbPath, "cursorDiskKV");
+              upgraded = parseCursorComposerDataJson(sourceRow.raw_jsonl, { bubbleReader }).messages;
+            } finally {
+              try {
+                bubbleReader && bubbleReader.close && bubbleReader.close();
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
+      } catch {
+        upgraded = null;
+      }
+
+      if (Array.isArray(upgraded) && upgraded.length > 0) {
+        messages = upgraded;
+        try {
+          if (typeof bridgeDb.updateSourceNormalizedJson === "function" && typeof sourceRow.id === "string") {
+            bridgeDb.updateSourceNormalizedJson({
+              id: sourceRow.id,
+              normalized_json: JSON.stringify(messages),
+              message_count: messages.length,
+            });
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
 
     res.json({ messages });
