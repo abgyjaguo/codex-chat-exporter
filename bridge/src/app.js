@@ -439,7 +439,7 @@ function allowedRootsForCandidate(candidate) {
     if (tool === "cursor" || hostApp === "cursor") roots.push(path.join(appData, "Cursor"));
     if (tool === "antigravity" || hostApp === "antigravity") roots.push(path.join(appData, "Antigravity"));
 
-    if (tool === "vscode-extension") {
+    if (tool === "vscode-extension" || tool === "vscode") {
       // Allow extension transcript files under common VSCode-family host roots.
       roots.push(path.join(appData, "Code"));
       roots.push(path.join(appData, "Cursor"));
@@ -725,6 +725,221 @@ function createApp(options = {}) {
     res.json({ candidates });
   });
 
+  app.post("/bridge/v1/local-transcripts/preview", async (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== "object") {
+      return sendError(res, 400, "invalid_request", "Request body must be JSON");
+    }
+
+    const candidate = body.candidate;
+    if (!candidate || typeof candidate !== "object") {
+      return sendError(res, 400, "invalid_request", "candidate must be an object");
+    }
+
+    const tool = typeof candidate.tool === "string" ? candidate.tool.trim() : "";
+    const source = candidate.source && typeof candidate.source === "object" ? candidate.source : null;
+    const sourceKind = source && typeof source.kind === "string" ? source.kind : "";
+
+    if (!tool) return sendError(res, 400, "invalid_request", "candidate.tool must be a non-empty string");
+    if (!source || (sourceKind !== "file" && sourceKind !== "sqlite-kv")) {
+      return sendError(res, 400, "invalid_request", "candidate.source.kind must be file or sqlite-kv");
+    }
+
+    const requestedPath = typeof source.path === "string" ? source.path.trim() : "";
+    if (!requestedPath) return sendError(res, 400, "invalid_request", "candidate.source.path must be a non-empty string");
+
+    const allowedRoots = allowedRootsForCandidate(candidate);
+    if (allowedRoots.length === 0) {
+      return sendError(res, 403, "forbidden", "No allowed roots configured for this candidate tool", { tool });
+    }
+
+    if (!allowedRoots.some((root) => isPathWithin(root, requestedPath))) {
+      return sendError(res, 403, "forbidden", "Path is not within allowed transcript roots", { path: requestedPath });
+    }
+
+    const maxMessagesRaw = body.max_messages;
+    const maxMessages =
+      typeof maxMessagesRaw === "number" && Number.isFinite(maxMessagesRaw) && maxMessagesRaw > 0
+        ? Math.min(500, Math.floor(maxMessagesRaw))
+        : 200;
+
+    let text = "";
+    let stat = null;
+    let exportedAt = new Date().toISOString();
+    let format = "";
+
+    if (sourceKind === "file") {
+      format = typeof source.format === "string" ? source.format.trim() : "";
+
+      try {
+        stat = fs.statSync(requestedPath);
+        // Antigravity Gemini storage uses binary `.pb` blobs. Avoid decoding/storing raw bytes as UTF-8.
+        if (requestedPath.toLowerCase().endsWith(".pb")) text = "";
+        else text = fs.readFileSync(requestedPath, "utf-8");
+      } catch (err) {
+        return sendError(res, 404, "not_found", "Failed to read transcript file", {
+          path: requestedPath,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      exportedAt = new Date(stat.mtimeMs || Date.now()).toISOString();
+    } else {
+      const table = typeof source.table === "string" ? source.table.trim() : "";
+      const key = typeof source.key === "string" ? source.key.trim() : "";
+      if (!table) return sendError(res, 400, "invalid_request", "candidate.source.table must be a non-empty string");
+      if (!key) return sendError(res, 400, "invalid_request", "candidate.source.key must be a non-empty string");
+
+      const valueText = readSqliteKvValue(requestedPath, table, key);
+      if (valueText == null) {
+        return sendError(res, 404, "not_found", "Failed to read sqlite-kv transcript value", {
+          path: requestedPath,
+          table,
+          key,
+        });
+      }
+
+      text = valueText;
+      format = "sqlite-kv";
+
+      // Best-effort "exportedAt" based on candidate preview timestamps
+      const updatedAt = typeof candidate.preview?.updatedAt === "string" ? candidate.preview.updatedAt : "";
+      const startedAt = typeof candidate.preview?.startedAt === "string" ? candidate.preview.startedAt : "";
+      exportedAt = updatedAt || startedAt || exportedAt;
+    }
+
+    const includeToolOutputs = body.include_tool_outputs === true;
+    const includeEnvironmentContext = body.include_environment_context === true;
+
+    const warnings = [];
+    let source_type = "local_transcript";
+    let projectName = typeof candidate.projectName === "string" ? candidate.projectName.trim() : "";
+    let projectCwd = "";
+    let sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+
+    let parsed;
+
+    if (tool === "codex" && sourceKind === "file" && format === "jsonl") {
+      const meta = tryParseCodexSessionMeta(text);
+      if (meta && meta.cwd) {
+        projectCwd = meta.cwd;
+        if (!projectName) projectName = path.basename(meta.cwd);
+      }
+      if (meta && meta.id) sessionName = meta.id;
+
+      const filtered = filterCodexJsonlRaw(text, { includeToolOutputs, includeEnvironmentContext });
+      parsed = parseCodexJsonl(filtered, { includeToolOutputs, includeEnvironmentContext });
+      for (const w of parsed.warnings) warnings.push(w);
+      source_type = "codex_jsonl";
+    } else if (tool === "claude-code" && sourceKind === "file" && format === "jsonl") {
+      parsed = parseClaudeCodeJsonl(text);
+      source_type = "claude_code_jsonl";
+      const meta = findClaudeSessionMeta(text);
+      if (meta.cwd) {
+        projectCwd = meta.cwd;
+        if (!projectName) projectName = path.basename(meta.cwd);
+      }
+      if (meta.sessionId) sessionName = meta.sessionId;
+    } else if (tool === "opencode" && sourceKind === "file" && (format === "chat-json" || format === "json")) {
+      parsed = parseGenericJson(text);
+      source_type = "opencode_session_json";
+      for (const w of parsed.warnings || []) warnings.push(w);
+
+      projectCwd = "opencode://local";
+      if (!projectName) projectName = "OpenCode";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = path.basename(requestedPath);
+    } else if (tool === "kiro" && sourceKind === "file" && (format === "chat-json" || requestedPath.toLowerCase().endsWith(".chat"))) {
+      parsed = parseKiroChatJson(text);
+      source_type = "kiro_chat";
+
+      const workspaceId = path.basename(path.dirname(requestedPath));
+      projectCwd = `kiro://${workspaceId}`;
+      if (!projectName) projectName = `Kiro (${workspaceId.slice(0, 8)})`;
+      if (!sessionName) sessionName = path.basename(requestedPath);
+    } else if (tool === "cursor" && sourceKind === "sqlite-kv") {
+      let bubbleReader = null;
+      try {
+        bubbleReader = createSqliteKvReader(requestedPath, "cursorDiskKV");
+        parsed = parseCursorComposerDataJson(text, { bubbleReader });
+      } finally {
+        try {
+          bubbleReader && bubbleReader.close && bubbleReader.close();
+        } catch {
+          // ignore
+        }
+      }
+      source_type = "cursor_sqlite_kv";
+      for (const w of parsed.warnings || []) warnings.push(w);
+
+      projectCwd = "cursor://globalStorage";
+      if (!projectName) projectName = "Cursor";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "cursor";
+    } else if (tool === "antigravity" && sourceKind === "file" && requestedPath.toLowerCase().endsWith(".pb")) {
+      source_type = "antigravity_gemini_pb";
+      parsed = {
+        messages: [
+          {
+            role: "system",
+            timestamp: null,
+            text: "Antigravity conversation blobs (.pb) are not yet supported for parsing. This preview shows a stub message only.",
+            message_id: messageIdForIndex(0),
+          },
+        ],
+        message_count: 1,
+        warnings: [{ code: "unsupported_format", message: "Unsupported Antigravity .pb format; preview stub only." }],
+      };
+      for (const w of parsed.warnings || []) warnings.push(w);
+
+      projectCwd = "antigravity://gemini";
+      if (!projectName) projectName = "Antigravity";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = path.basename(requestedPath);
+    } else if (tool === "antigravity" && sourceKind === "sqlite-kv") {
+      parsed = parseGenericJson(text);
+      source_type = "antigravity_sqlite_kv";
+      for (const w of parsed.warnings || []) warnings.push(w);
+
+      projectCwd = "antigravity://globalStorage";
+      if (!projectName) projectName = "Antigravity";
+      if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "antigravity";
+    } else if ((tool === "vscode-extension" || tool === "vscode") && sourceKind === "file") {
+      source_type = "vscode_extension_file";
+      if (format === "jsonl") parsed = parseGenericJsonl(text);
+      else if (format === "json") parsed = parseGenericJson(text);
+      else if (format === "chat-json") parsed = parseKiroChatJson(text);
+      else {
+        parsed = {
+          messages: [{ role: "user", timestamp: null, text: String(text || "").slice(0, 50_000), message_id: messageIdForIndex(0) }],
+          message_count: 1,
+          warnings: [{ code: "unsupported_format", message: `Unsupported format for vscode-extension: ${format || "unknown"}` }],
+        };
+      }
+      for (const w of parsed.warnings || []) warnings.push(w);
+    } else {
+      return sendError(res, 400, "unsupported", "Unsupported transcript preview type", { tool, format, path: requestedPath, sourceKind });
+    }
+
+    if (!projectName) projectName = "Imported Chat";
+    if (!projectCwd) projectCwd = `file://${requestedPath}`;
+    if (!sessionName) sessionName = path.basename(requestedPath);
+
+    const allMessages = Array.isArray(parsed?.messages) ? parsed.messages : [];
+
+    res.json({
+      project_name: projectName,
+      project_cwd: projectCwd,
+      session_name: sessionName,
+      exported_at: exportedAt,
+      source_type,
+      message_count: parsed?.message_count || allMessages.length,
+      warnings,
+      messages: allMessages.slice(0, maxMessages),
+    });
+  });
+
   app.post("/bridge/v1/local-transcripts/import", async (req, res) => {
     const body = req.body;
     if (!body || typeof body !== "object") {
@@ -917,7 +1132,7 @@ function createApp(options = {}) {
       if (!projectName) projectName = "Antigravity";
       if (!sessionName) sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
       if (!sessionName) sessionName = typeof source.key === "string" ? source.key.trim() : "antigravity";
-    } else if (tool === "vscode-extension" && sourceKind === "file") {
+    } else if ((tool === "vscode-extension" || tool === "vscode") && sourceKind === "file") {
       source_type = "vscode_extension_file";
       if (format === "jsonl") parsed = parseGenericJsonl(text);
       else if (format === "json") parsed = parseGenericJson(text);
@@ -1738,4 +1953,3 @@ function createBridgeApp(options = {}) {
 }
 
 module.exports = { createApp, createBridgeApp };
-
