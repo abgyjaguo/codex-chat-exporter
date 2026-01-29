@@ -27,7 +27,10 @@ function isToolOutputEntry(obj) {
     obj.type === "response_item" &&
     obj.payload &&
     typeof obj.payload === "object" &&
-    obj.payload.type === "function_call_output"
+    (obj.payload.type === "function_call_output" ||
+      obj.payload.type === "function_call" ||
+      obj.payload.type === "custom_tool_call" ||
+      obj.payload.type === "custom_tool_call_output")
   );
 }
 
@@ -110,6 +113,7 @@ function parseCodexJsonl(jsonlText, options = {}) {
   const messageSources = detectMessageSources(lines);
 
   const messages = [];
+  const toolNameById = new Map();
   let lineNo = 0;
   for (const line of lines) {
     lineNo += 1;
@@ -137,19 +141,30 @@ function parseCodexJsonl(jsonlText, options = {}) {
         const text = obj.payload.message;
         if (looksLikeEnvironmentContext(text)) {
           if (!includeEnvironmentContext) continue;
-          messages.push({ role: "system", timestamp: ts, text });
+          messages.push({ role: "system", timestamp: ts, text, blocks: [{ type: "text", text }] });
           continue;
         }
-        messages.push({ role: "user", timestamp: ts, text });
+        messages.push({ role: "user", timestamp: ts, text, blocks: [{ type: "text", text }] });
       }
       if (t === "agent_message" && typeof obj.payload.message === "string") {
         const text = obj.payload.message;
         if (looksLikeEnvironmentContext(text)) {
           if (!includeEnvironmentContext) continue;
-          messages.push({ role: "system", timestamp: ts, text });
+          messages.push({ role: "system", timestamp: ts, text, blocks: [{ type: "text", text }] });
           continue;
         }
-        messages.push({ role: "assistant", timestamp: ts, text });
+        messages.push({ role: "assistant", timestamp: ts, text, blocks: [{ type: "text", text }] });
+      }
+      if (t === "agent_reasoning" && typeof obj.payload.text === "string") {
+        const thinking = obj.payload.text;
+        if (looksLikeEnvironmentContext(thinking)) {
+          if (!includeEnvironmentContext) continue;
+          messages.push({ role: "system", timestamp: ts, text: thinking, blocks: [{ type: "text", text: thinking }] });
+          continue;
+        }
+        if (String(thinking || "").trim()) {
+          messages.push({ role: "system", timestamp: ts, text: thinking, blocks: [{ type: "thinking", thinking }] });
+        }
       }
       continue;
     }
@@ -160,7 +175,122 @@ function parseCodexJsonl(jsonlText, options = {}) {
       if (includeToolOutputs && p.type === "function_call_output" && typeof p.call_id === "string") {
         const text = typeof p.output === "string" ? p.output : "";
         if (text.trim()) {
-          messages.push({ role: "tool", timestamp: ts, tool_call_id: p.call_id, text });
+          const callId = p.call_id;
+          const toolName = toolNameById.get(callId);
+          const isError = /\bexit code:\s*[1-9]\d*\b/i.test(text) || /\b(exit code|error|failed)\b/i.test(text);
+          messages.push({
+            role: "tool",
+            timestamp: ts,
+            tool_call_id: callId,
+            text,
+            blocks: [{ type: "tool_result", tool_use_id: callId, content: text, is_error: isError, tool_name: toolName }],
+          });
+        }
+        continue;
+      }
+
+      if (includeToolOutputs && p.type === "function_call") {
+        const name = typeof p.name === "string" && p.name.trim() ? String(p.name) : "Unknown tool";
+        const callId = typeof p.call_id === "string" ? String(p.call_id) : typeof p.callId === "string" ? String(p.callId) : undefined;
+        let input = typeof p.arguments === "string" ? String(p.arguments) : p.arguments;
+        if (typeof input === "string") {
+          const tt = input.trim();
+          if (tt.startsWith("{") || tt.startsWith("[")) {
+            try {
+              input = JSON.parse(tt);
+            } catch {
+              // keep string
+            }
+          }
+        }
+        if (callId) toolNameById.set(callId, name);
+        messages.push({
+          role: "tool",
+          timestamp: ts,
+          tool_call_id: callId,
+          text: name,
+          blocks: [{ type: "tool_use", id: callId, name, input }],
+        });
+        continue;
+      }
+
+      if (includeToolOutputs && p.type === "custom_tool_call") {
+        const name = typeof p.name === "string" && p.name.trim() ? String(p.name) : "Unknown tool";
+        const callId = typeof p.call_id === "string" ? String(p.call_id) : typeof p.callId === "string" ? String(p.callId) : undefined;
+        let input = p.input;
+        if (typeof input === "string") {
+          const tt = input.trim();
+          if (tt.startsWith("{") || tt.startsWith("[")) {
+            try {
+              input = JSON.parse(tt);
+            } catch {
+              // keep string
+            }
+          }
+        }
+        if (callId) toolNameById.set(callId, name);
+        messages.push({
+          role: "tool",
+          timestamp: ts,
+          tool_call_id: callId,
+          text: name,
+          blocks: [{ type: "tool_use", id: callId, name, input }],
+        });
+        continue;
+      }
+
+      if (includeToolOutputs && p.type === "custom_tool_call_output") {
+        const callId = typeof p.call_id === "string" ? String(p.call_id) : typeof p.callId === "string" ? String(p.callId) : undefined;
+        const raw = typeof p.output === "string" ? p.output : typeof p.content === "string" ? p.content : typeof p.text === "string" ? p.text : "";
+        let content = raw;
+        if (typeof content === "string") {
+          const tt = content.trim();
+          if (tt.startsWith("{") || tt.startsWith("[")) {
+            try {
+              content = JSON.parse(tt);
+            } catch {
+              // keep string
+            }
+          }
+        }
+        const isError =
+          typeof content === "string"
+            ? /\bexit code:\s*[1-9]\d*\b/i.test(content) || /\b(exit code|error|failed)\b/i.test(content)
+            : false;
+        const toolName = callId ? toolNameById.get(callId) : undefined;
+        const text = typeof content === "string" ? content : raw || "Tool output";
+        if (String(text || "").trim()) {
+          messages.push({
+            role: "tool",
+            timestamp: ts,
+            tool_call_id: callId,
+            text,
+            blocks: [{ type: "tool_result", tool_use_id: callId, content, is_error: isError, tool_name: toolName }],
+          });
+        }
+        continue;
+      }
+
+      if (p.type === "reasoning") {
+        const summary = Array.isArray(p.summary) ? p.summary : [];
+        const thinking = summary
+          .map((s) => {
+            if (!s || typeof s !== "object") return "";
+            if (typeof s.text === "string") return String(s.text);
+            if (typeof s.summary_text === "string") return String(s.summary_text);
+            return "";
+          })
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+
+        if (thinking) {
+          if (looksLikeEnvironmentContext(thinking)) {
+            if (!includeEnvironmentContext) continue;
+            messages.push({ role: "system", timestamp: ts, text: thinking, blocks: [{ type: "text", text: thinking }] });
+            continue;
+          }
+          messages.push({ role: "system", timestamp: ts, text: thinking, blocks: [{ type: "thinking", thinking }] });
         }
         continue;
       }
@@ -172,15 +302,15 @@ function parseCodexJsonl(jsonlText, options = {}) {
 
         if (looksLikeEnvironmentContext(text)) {
           if (!includeEnvironmentContext) continue;
-          messages.push({ role: "system", timestamp: ts, text });
+          messages.push({ role: "system", timestamp: ts, text, blocks: [{ type: "text", text }] });
           continue;
         }
 
         if (messageSources.hasEventUserMessage && role === "user") continue;
         if (messageSources.hasEventAgentMessage && role === "assistant") continue;
 
-        if (role === "user" || role === "assistant") {
-          messages.push({ role, timestamp: ts, text });
+        if (role === "user" || role === "assistant" || role === "system") {
+          messages.push({ role, timestamp: ts, text, blocks: [{ type: "text", text }] });
         }
       }
       continue;
@@ -232,4 +362,3 @@ function detectMessageSources(lines) {
 }
 
 module.exports = { filterCodexJsonlRaw, parseCodexJsonl };
-
