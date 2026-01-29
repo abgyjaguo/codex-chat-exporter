@@ -128,9 +128,21 @@ function tryParseCodexSessionMeta(jsonlText) {
           ? cwdRaw.slice("\\\\?\\".length)
           : cwdRaw;
       const id = typeof obj.payload.id === "string" ? obj.payload.id : "";
-      return { cwd, id };
+      const originator = typeof obj.payload.originator === "string" ? obj.payload.originator : "";
+      const source = typeof obj.payload.source === "string" ? obj.payload.source : "";
+      return { cwd, id, originator, source };
     }
   }
+  return null;
+}
+
+function inferCodexPortFromSessionMeta(meta) {
+  const originator = typeof meta?.originator === "string" ? meta.originator.trim().toLowerCase() : "";
+  const source = typeof meta?.source === "string" ? meta.source.trim().toLowerCase() : "";
+
+  if (originator.includes("vscode") || source === "vscode") return "ide";
+  if (originator.includes("ide") || source === "ide") return "ide";
+  if (originator.includes("cli") || source === "cli") return "cli";
   return null;
 }
 
@@ -818,6 +830,7 @@ function createApp(options = {}) {
     let sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
 
     let parsed;
+    let session_meta;
 
     if (tool === "codex" && sourceKind === "file" && format === "jsonl") {
       const meta = tryParseCodexSessionMeta(text);
@@ -826,6 +839,17 @@ function createApp(options = {}) {
         if (!projectName) projectName = path.basename(meta.cwd);
       }
       if (meta && meta.id) sessionName = meta.id;
+
+      if (meta) {
+        const port = inferCodexPortFromSessionMeta(meta);
+        const out = {};
+        if (meta.id) out.id = meta.id;
+        if (meta.cwd) out.cwd = meta.cwd;
+        if (meta.originator) out.originator = meta.originator;
+        if (meta.source) out.source = meta.source;
+        if (port) out.codex_port = port;
+        if (Object.keys(out).length) session_meta = out;
+      }
 
       const filtered = filterCodexJsonlRaw(text, { includeToolOutputs, includeEnvironmentContext });
       parsed = parseCodexJsonl(filtered, { includeToolOutputs, includeEnvironmentContext });
@@ -932,6 +956,7 @@ function createApp(options = {}) {
       project_name: projectName,
       project_cwd: projectCwd,
       session_name: sessionName,
+      session_meta,
       exported_at: exportedAt,
       source_type,
       message_count: parsed?.message_count || allMessages.length,
