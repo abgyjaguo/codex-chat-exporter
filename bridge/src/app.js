@@ -921,6 +921,11 @@ function createApp(options = {}) {
     let projectCwd = "";
     let sessionName = typeof candidate.title === "string" ? candidate.title.trim() : "";
 
+    const candidateMeta = candidate.meta && typeof candidate.meta === "object" ? candidate.meta : {};
+    const metaRepoRoot = typeof candidateMeta.repo_root === "string" ? candidateMeta.repo_root.trim() : "";
+    const metaWorktreeName = typeof candidateMeta.worktree_name === "string" ? candidateMeta.worktree_name.trim() : "";
+    const isWorktree = candidateMeta.worktree === true || Boolean(metaWorktreeName);
+
     let parsed;
     let raw_jsonl = "";
     let raw_markdown = null;
@@ -932,6 +937,11 @@ function createApp(options = {}) {
         if (!projectName) projectName = path.basename(meta.cwd);
       }
       if (meta && meta.id) sessionName = meta.id;
+
+      if (metaRepoRoot) {
+        projectCwd = metaRepoRoot;
+        if (!projectName) projectName = path.basename(metaRepoRoot);
+      }
 
       raw_jsonl = filterCodexJsonlRaw(text, { includeToolOutputs, includeEnvironmentContext });
       parsed = parseCodexJsonl(raw_jsonl, { includeToolOutputs, includeEnvironmentContext });
@@ -950,6 +960,11 @@ function createApp(options = {}) {
         if (!projectName) projectName = path.basename(meta.cwd);
       }
       if (meta.sessionId) sessionName = meta.sessionId;
+
+      if (metaRepoRoot) {
+        projectCwd = metaRepoRoot;
+        if (!projectName) projectName = path.basename(metaRepoRoot);
+      }
     } else if (tool === "opencode" && sourceKind === "file" && (format === "chat-json" || format === "json")) {
       parsed = parseGenericJson(text);
       source_type = "opencode_session_json";
@@ -1048,6 +1063,9 @@ function createApp(options = {}) {
     if (!projectName) projectName = "Imported Chat";
     if (!projectCwd) projectCwd = `file://${requestedPath}`;
     if (!sessionName) sessionName = path.basename(requestedPath);
+    if (isWorktree && metaWorktreeName && !sessionName.startsWith("worktree/")) {
+      sessionName = `worktree/${metaWorktreeName}/${sessionName}`;
+    }
 
     const project_id = stableId("proj", projectCwd);
     const session_id = stableId("sess", project_id, sessionName);
