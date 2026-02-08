@@ -172,10 +172,11 @@ function parseCodexJsonl(jsonlText, options = {}) {
     if (obj.type === "response_item" && obj.payload && typeof obj.payload === "object") {
       const p = obj.payload;
 
-      if (includeToolOutputs && p.type === "function_call_output" && typeof p.call_id === "string") {
+      if (includeToolOutputs && p.type === "function_call_output") {
+        const callId =
+          typeof p.call_id === "string" ? String(p.call_id) : typeof p.callId === "string" ? String(p.callId) : undefined;
         const text = typeof p.output === "string" ? p.output : "";
         if (text.trim()) {
-          const callId = p.call_id;
           const toolName = toolNameById.get(callId);
           const isError = /\bexit code:\s*[1-9]\d*\b/i.test(text) || /\b(exit code|error|failed)\b/i.test(text);
           messages.push({
@@ -314,6 +315,33 @@ function parseCodexJsonl(jsonlText, options = {}) {
         }
       }
       continue;
+    }
+  }
+
+  // Second pass: backfill missing tool_name on tool_result blocks (improves UI labels + adjacent-merge keying).
+  const toolNameById2 = new Map();
+  for (const m of messages) {
+    const bs = Array.isArray(m?.blocks) ? m.blocks : null;
+    if (!bs) continue;
+    for (const b of bs) {
+      if (!b || typeof b !== "object") continue;
+      if (b.type !== "tool_use") continue;
+      const id = typeof b.id === "string" ? String(b.id) : "";
+      const name = typeof b.name === "string" ? String(b.name) : "";
+      if (id && name) toolNameById2.set(id, name);
+    }
+  }
+  for (const m of messages) {
+    const bs = Array.isArray(m?.blocks) ? m.blocks : null;
+    if (!bs) continue;
+    for (const b of bs) {
+      if (!b || typeof b !== "object") continue;
+      if (b.type !== "tool_result") continue;
+      const toolUseId = typeof b.tool_use_id === "string" ? String(b.tool_use_id) : "";
+      const toolName = typeof b.tool_name === "string" ? String(b.tool_name) : "";
+      if (!toolUseId || toolName) continue;
+      const inferred = toolNameById2.get(toolUseId);
+      if (inferred) b.tool_name = inferred;
     }
   }
 

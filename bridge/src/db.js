@@ -83,6 +83,14 @@ function makeBridgeDb(db, driver) {
     });
   }
 
+  function updateSourceNormalizedJson({ id, normalized_json, message_count }) {
+    statements.updateSourceNormalizedJson.run({
+      id,
+      normalized_json: typeof normalized_json === "string" ? normalized_json : "[]",
+      message_count: Number.isFinite(message_count) ? message_count : 0,
+    });
+  }
+
   function getProjectById(id) {
     return statements.getProjectById.get({ id }) || null;
   }
@@ -159,6 +167,7 @@ function makeBridgeDb(db, driver) {
     ensureProject,
     ensureSession,
     addSource,
+    updateSourceNormalizedJson,
     getProjectById,
     getSessionById,
     getLatestSourceBySessionId,
@@ -197,6 +206,12 @@ function prepareStatements(db) {
        VALUES (
          @id, @session_id, @exported_at, @raw_jsonl, @raw_markdown, @normalized_json, @warnings_json, @message_count, @created_at
        )`,
+    ),
+    updateSourceNormalizedJson: db.prepare(
+      `UPDATE sources
+       SET normalized_json = @normalized_json,
+           message_count = @message_count
+       WHERE id = @id`,
     ),
     getProjectById: db.prepare(
       `SELECT id, name, cwd, created_at
