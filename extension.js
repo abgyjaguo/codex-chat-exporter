@@ -83,20 +83,6 @@ async function exportChatCommand(options = {}) {
   const includeToolOutputs = config.get("includeToolOutputs", false);
   const includeEnvironmentContext = config.get("includeEnvironmentContext", false);
 
-  // Fail fast: check Bridge health before continuing.
-  try {
-    const healthUrl = new URL("/bridge/v1/health", bridgeBaseUrl);
-    const health = await getText(healthUrl);
-    if (String(health || "").trim() !== "ok") {
-      throw new Error(`unexpected health response: ${String(health || "").trim()}`);
-    }
-  } catch (err) {
-    void vscode.window.showErrorMessage(
-      `Sync aborted: Bridge is not reachable or unhealthy (${bridgeBaseUrl}).\n\n${stringifyError(err)}`,
-    );
-    return;
-  }
-
   const sessions = await discoverSessionFiles(existingCodexDirs);
   if (sessions.length === 0) {
     void vscode.window.showWarningMessage(
